@@ -408,7 +408,7 @@ function doPost(e) {
     if (!sheet) {
       sheet = ss.insertSheet(sheetName);
       // 헤더 행 작성
-      const headers = ['증권사','종목명','투자국가','섹터','평가금액(원)','보유수량','수익률(%)'];
+      const headers = ['종목명','투자국가','섹터','평가금액(원)','보유수량','수익률(%)'];
       sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
       
       // 헤더 스타일
@@ -430,7 +430,6 @@ function doPost(e) {
     const holdings = data.holdings || [];
     if (holdings.length > 0) {
       const rows = holdings.map(h => [
-        h.broker || '',
         h.name || '',
         h.country || '',
         h.sector || '',
@@ -438,17 +437,17 @@ function doPost(e) {
         h.shares || 0,
         h.return_rate || 0
       ]);
-      sheet.getRange(2, 1, rows.length, 7).setValues(rows);
+      sheet.getRange(2, 1, rows.length, 6).setValues(rows);
       
-      // 수익률 컬럼 색상
+      // 수익률 컬럼 색상 (6번째 컬럼)
       for (let i = 0; i < holdings.length; i++) {
         const rate = holdings[i].return_rate || 0;
-        const cell = sheet.getRange(i + 2, 7);
+        const cell = sheet.getRange(i + 2, 6);
         cell.setFontColor(rate >= 0 ? '#00d4aa' : '#ff6b6b');
       }
       
-      // 금액 컬럼 숫자 포맷
-      sheet.getRange(2, 5, rows.length, 1)
+      // 금액 컬럼 숫자 포맷 (4번째 컬럼)
+      sheet.getRange(2, 4, rows.length, 1)
            .setNumberFormat('#,##0');
     }
     
@@ -467,7 +466,7 @@ function doPost(e) {
          .setFontWeight('bold');
     
     // 열 너비 자동 조정
-    sheet.autoResizeColumns(1, 7);
+    sheet.autoResizeColumns(1, 6);
     
     // 요약 시트 업데이트
     updateSummarySheet(ss, data, sheetName, total);
@@ -658,12 +657,18 @@ function loadImg(file) {
 
   const r = new FileReader();
   r.onload = e => {
-    imgB64 = e.target.result.split(',')[1];
-    document.getElementById('previewImg').src = e.target.result;
+    const originalDataUrl = e.target.result;
+    document.getElementById('previewImg').src = originalDataUrl;
     dz.classList.add('filled');
     const btn = document.getElementById('analyzeBtn');
     btn.disabled = false;
     btn.textContent = `✦  분석하기 (${detectedDate})`;
+
+    // 원본 dataUrl 저장 (슬라이싱에 사용)
+    imgFile._dataUrl = originalDataUrl;
+    imgFile._normalizedType = imgFile.type || 'image/png';
+    // 단일 분석용 base64도 유지
+    imgB64 = originalDataUrl.split(',')[1];
   };
   r.readAsDataURL(file);
 }
@@ -732,56 +737,161 @@ async function analyze() {
 
 function sleep(ms) { return new Promise(r=>setTimeout(r,ms)); }
 
-async function callClaude() {
-  if (!apiKey) {
-    throw new Error('API 키가 없습니다. ⚙️ 설정 탭에서 Anthropic API 키를 입력하세요.');
-  }
-  const prompt=`당신은 주식 포트폴리오 분석 전문가입니다.
-이 이미지는 '도미노' 자산관리 앱의 전체 잔고 화면입니다.
-메리츠증권, 유안타증권, 한국투자증권, 나무증권(NH) 등 여러 계좌가 합산되어 표시됩니다.
+// 이미지를 세로로 N등분하여 슬라이스 배열 반환
+async function sliceImage(dataUrl, slices) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      const w = img.naturalWidth, h = img.naturalHeight;
+      const sliceH = Math.ceil(h / slices);
+      // 각 슬라이스마다 50px 오버랩 (종목 잘림 방지)
+      const overlap = 80;
+      const result = [];
+      for (let i = 0; i < slices; i++) {
+        const y = Math.max(0, i * sliceH - (i > 0 ? overlap : 0));
+        const endY = Math.min(h, (i + 1) * sliceH + (i < slices - 1 ? overlap : 0));
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = endY - y;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, y, w, endY - y, 0, 0, w, endY - y);
+        result.push(canvas.toDataURL('image/png').split(',')[1]);
+      }
+      resolve(result);
+    };
+    img.src = dataUrl;
+  });
+}
 
-이미지에서 모든 보유 종목을 추출해 아래 JSON으로만 응답하세요. 마크다운 없이 순수 JSON만 출력.
+// 단일 슬라이스 분석
+async function analyzeSlice(b64, sliceIndex, totalSlices) {
+  const isFirst = sliceIndex === 0;
+  const isLast = sliceIndex === totalSlices - 1;
+  const posHint = isFirst ? '화면 상단 부분' : isLast ? '화면 하단 부분' : `화면 중간 ${sliceIndex+1}/${totalSlices} 부분`;
+
+  const prompt = `당신은 주식 포트폴리오 분석 전문가입니다.
+이 이미지는 '도미노' 자산관리 앱 잔고 화면의 ${posHint}입니다.
+
+각 종목 항목 구조:
+- 종목명 (굵은 글씨, 로고 옆)
+- 종목명 바로 아래 작은 글씨: 보유수량 (예: "2,158주", "369주", "1,139주")
+- 오른쪽: 평가금액 (원화, 예: "53,467,635원")
+- 평가금액 아래: 손익금액과 수익률 (예: "+8,859,509원 (+19.86%)")
+
+이 이미지에서 보이는 종목을 모두 추출하세요. 절반만 잘린 종목도 보이는 정보만으로 추출하세요.
+마크다운 없이 순수 JSON만 출력하세요.
 
 {
   "holdings": [
     {
-      "broker": "증권사명 (메리츠증권/유안타증권/한국투자증권/나무증권/알수없음)",
       "name": "종목명",
       "country": "미국/한국/일본/중국/기타",
       "sector": "IT/금융/헬스케어/소비재/에너지/산업재/통신/부동산/소재/유틸리티/기타",
       "value": 평가금액(숫자 원화),
       "shares": 보유수량(숫자),
-      "return_rate": 수익률(숫자 예:12.5 또는 -3.2)
+      "return_rate": 수익률(숫자 예:19.86 또는 -9.47)
     }
   ],
-  "cash": 현금총액(숫자 원화 없으면0),
-  "notes": "읽기어려운부분메모 없으면빈문자열"
+  "cash": 현금총액(숫자 원화, 현금 항목이 보이면 추출 없으면 0)
 }
 
-규칙: 증권사구분불가→알수없음 / 섹터불명→종목명으로추정 / 외화→원화환산`;
+주의: 종목명 아래 작은 글씨 수량 반드시 추출. 섹터 불명 시 종목명으로 추정. 외화는 원화 환산.`;
 
-  const res=await fetch('https://api.anthropic.com/v1/messages',{
-    method:'POST',
-    headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-    body:JSON.stringify({
-      model:'claude-sonnet-4-20250514',
-      max_tokens:4096,
-      messages:[{role:'user',content:[
-        {type:'image',source:{type:'base64',media_type:imgFile.type||'image/jpeg',data:imgB64}},
-        {type:'text',text:prompt}
-      ]}]
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true'
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 4096,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: b64 } },
+          { type: 'text', text: prompt }
+        ]
+      }]
     })
   });
 
-  if(!res.ok){
-    const e=await res.json().catch(()=>({}));
-    throw new Error(e.error?.message||`서버 오류 (${res.status})`);
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    throw new Error(e.error?.message || `서버 오류 (${res.status})`);
   }
 
-  const d=await res.json();
-  const raw=d.content.map(b=>b.text||'').join('').replace(/```json|```/g,'').trim();
+  const d = await res.json();
+  const raw = d.content.map(b => b.text || '').join('').replace(/```json|```/g, '').trim();
   try { return JSON.parse(raw); }
-  catch { throw new Error('AI 응답 파싱 실패. 다시 시도해주세요.'); }
+  catch { return { holdings: [], cash: 0 }; }
+}
+
+// 중복 종목 제거 (이름 기준, 더 정확한 쪽 유지)
+function deduplicateHoldings(holdings) {
+  const map = new Map();
+  holdings.forEach(h => {
+    const key = h.name.trim();
+    if (!map.has(key)) {
+      map.set(key, h);
+    } else {
+      // shares가 더 정확한 쪽(0이 아닌) 유지
+      const existing = map.get(key);
+      if ((!existing.shares || existing.shares === 0) && h.shares > 0) {
+        map.set(key, h);
+      }
+    }
+  });
+  return Array.from(map.values());
+}
+
+async function callClaude() {
+  if (!apiKey) {
+    throw new Error('API 키가 없습니다. ⚙️ 설정 탭에서 Anthropic API 키를 입력하세요.');
+  }
+
+  const dataUrl = imgFile._dataUrl;
+  if (!dataUrl) throw new Error('이미지를 다시 업로드해주세요.');
+
+  // 이미지 높이 확인 후 슬라이스 수 결정
+  const imgHeight = await new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => resolve(img.naturalHeight);
+    img.src = dataUrl;
+  });
+
+  // 2000px 이하면 1장, 4000px 이하면 2장, 그 이상은 3장
+  const SLICE_HEIGHT = 2500;
+  const numSlices = Math.max(1, Math.ceil(imgHeight / SLICE_HEIGHT));
+
+  document.getElementById('loading-wrap') || null;
+  const loadingP = document.querySelector('.loading-wrap p');
+  if (loadingP) loadingP.textContent = `이미지를 ${numSlices}개 구간으로 나눠 분석합니다`;
+
+  // 슬라이스 생성
+  const slices = await sliceImage(dataUrl, numSlices);
+
+  // 각 슬라이스 분석
+  const allHoldings = [];
+  let totalCash = 0;
+
+  for (let i = 0; i < slices.length; i++) {
+    if (loadingP) loadingP.textContent = `분석 중... (${i+1}/${slices.length})`;
+    const sliceResult = await analyzeSlice(slices[i], i, slices.length);
+    allHoldings.push(...(sliceResult.holdings || []));
+    if (sliceResult.cash) totalCash = Math.max(totalCash, sliceResult.cash);
+  }
+
+  // 중복 제거
+  const deduplicated = deduplicateHoldings(allHoldings);
+
+  return {
+    holdings: deduplicated,
+    cash: totalCash,
+    notes: ''
+  };
 }
 
 // ── SHEET SAVE ──
@@ -877,7 +987,6 @@ function renderResult(sheetSaved=false) {
       <div>
         <div class="h-name">${x.name||'-'}</div>
         <div class="h-meta">
-          <span class="broker-pill" style="${bst}">${x.broker||'-'}</span>
           <span>${fl} ${x.country||'-'}</span>
           <span class="chip">${x.sector||'-'}</span>
         </div>
@@ -887,8 +996,8 @@ function renderResult(sheetSaved=false) {
         <div class="h-rate ${rc}">${sign(rr)}${rr.toFixed(2)}%</div>
       </div>
       <div class="h-detail">
-        <span class="h-pill">수량 ${(x.shares||0).toLocaleString()}</span>
-        <span class="h-pill">금액 ${(x.value||0).toLocaleString()}원</span>
+        <span class="h-pill">보유수량 ${(x.shares||0).toLocaleString()}주</span>
+        <span class="h-pill">평가금액 ${(x.value||0).toLocaleString()}원</span>
         <span class="h-pill ${rc}">수익률 ${sign(rr)}${rr.toFixed(2)}%</span>
       </div>`;
     div.addEventListener('click',()=>div.classList.toggle('expanded'));
@@ -930,15 +1039,15 @@ function renderHistory() {
 // ── EXPORT ──
 function copySheet() {
   if(!result) return;
-  const hdrs=['날짜','증권사','종목명','투자국가','섹터','평가금액','보유수량','수익률(%)'];
-  const rows=(result.holdings||[]).map(x=>[result.date,x.broker,x.name,x.country,x.sector,x.value,x.shares,x.return_rate].join('\t'));
+  const hdrs=['날짜','종목명','투자국가','섹터','평가금액','보유수량','수익률(%)'];
+  const rows=(result.holdings||[]).map(x=>[result.date,x.name,x.country,x.sector,x.value,x.shares,x.return_rate].join('\t'));
   navigator.clipboard.writeText([hdrs.join('\t'),...rows].join('\n')).then(()=>toast('✅ 클립보드에 복사됨'));
 }
 
 function dlCSV() {
   if(!result) return;
-  const hdrs=['날짜','증권사','종목명','투자국가','섹터','평가금액','보유수량','수익률(%)'];
-  const rows=(result.holdings||[]).map(x=>[result.date,x.broker,x.name,x.country,x.sector,x.value,x.shares,x.return_rate].join(','));
+  const hdrs=['날짜','종목명','투자국가','섹터','평가금액','보유수량','수익률(%)'];
+  const rows=(result.holdings||[]).map(x=>[result.date,x.name,x.country,x.sector,x.value,x.shares,x.return_rate].join(','));
   const blob=new Blob(['\uFEFF'+[hdrs.join(','),...rows].join('\n')],{type:'text/csv;charset=utf-8;'});
   const a=document.createElement('a');
   a.href=URL.createObjectURL(blob);
