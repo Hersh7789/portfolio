@@ -1,0 +1,931 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="포트폴리오">
+<meta name="theme-color" content="#0b0d14">
+<title>포트폴리오 분석기</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Noto+Sans+KR:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:#0b0d14; --card:#131620; --card2:#1a1e2e; --line:#252840;
+  --a1:#00d4aa; --a2:#4f8fff; --a3:#ff6b6b; --a4:#ffd166;
+  --txt:#e8eaf6; --txt2:#6b7090; --txt3:#30344a;
+  --pos:#00d4aa; --neg:#ff6b6b; --r:16px;
+  --safe-top:env(safe-area-inset-top); --safe-bot:env(safe-area-inset-bottom);
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{background:var(--bg);color:var(--txt);font-family:'Noto Sans KR',sans-serif;min-height:100dvh;overflow-x:hidden;-webkit-font-smoothing:antialiased}
+::-webkit-scrollbar{width:4px} ::-webkit-scrollbar-track{background:var(--bg)} ::-webkit-scrollbar-thumb{background:var(--line);border-radius:2px}
+
+.shell{max-width:480px;margin:0 auto;min-height:100dvh;padding-bottom:calc(80px + var(--safe-bot))}
+.ios-pad{height:calc(var(--safe-top) + 8px)}
+
+/* TOP BAR */
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:16px 20px 12px;position:sticky;top:0;z-index:100;background:rgba(11,13,20,0.92);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-bottom:1px solid rgba(255,255,255,0.04)}
+.topbar-logo{font-family:'Syne',sans-serif;font-weight:800;font-size:17px;letter-spacing:-.5px;display:flex;align-items:center;gap:8px}
+.logo-dot{width:8px;height:8px;background:var(--a1);border-radius:50%;box-shadow:0 0 8px var(--a1);animation:breathe 2.5s ease-in-out infinite}
+@keyframes breathe{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.8)}}
+
+/* SHEET BADGE */
+.sheet-badge{display:flex;align-items:center;gap:6px;background:var(--card);border:1px solid var(--line);border-radius:20px;padding:6px 12px;font-size:11px;color:var(--txt2);cursor:pointer;transition:all .2s}
+.sheet-badge.connected{border-color:rgba(0,212,170,.4);color:var(--a1)}
+.sheet-badge .dot{width:6px;height:6px;border-radius:50%;background:var(--txt3)}
+.sheet-badge.connected .dot{background:var(--a1);box-shadow:0 0 6px var(--a1)}
+
+/* PAGES */
+.page{display:none;padding:0 16px;animation:fadeUp .35s ease}
+.page.active{display:block}
+@keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+
+/* UPLOAD PAGE */
+.upload-hero{text-align:center;padding:32px 0 24px}
+.upload-icon-wrap{width:72px;height:72px;background:linear-gradient(135deg,rgba(0,212,170,.15),rgba(79,143,255,.15));border:1px solid rgba(0,212,170,.2);border-radius:20px;display:flex;align-items:center;justify-content:center;font-size:32px;margin:0 auto 16px}
+.upload-hero h1{font-family:'Syne',sans-serif;font-size:22px;font-weight:800;letter-spacing:-.5px;line-height:1.25;margin-bottom:8px}
+.upload-hero h1 em{font-style:normal;background:linear-gradient(90deg,var(--a1),var(--a2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.upload-hero p{font-size:12px;color:var(--txt2);line-height:1.7}
+
+/* Sheet setup card */
+.setup-card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:16px;margin-bottom:12px;transition:border-color .2s}
+.setup-card.connected{border-color:rgba(0,212,170,.3)}
+.setup-header{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.setup-icon{font-size:20px}
+.setup-title{font-size:13px;font-weight:600}
+.setup-sub{font-size:11px;color:var(--txt2);margin-top:1px}
+.setup-input{width:100%;background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:10px 14px;color:var(--txt);font-size:12px;font-family:'JetBrains Mono',monospace;outline:none;transition:border-color .2s}
+.setup-input:focus{border-color:var(--a1)}
+.setup-input::placeholder{color:var(--txt2)}
+.setup-hint{font-size:11px;color:var(--txt2);margin-top:8px;line-height:1.6}
+.setup-hint a{color:var(--a1);text-decoration:none}
+.setup-connected{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--a1);display:none}
+.setup-connected.show{display:flex}
+.conn-status-row{display:flex;gap:8px;margin-top:10px}
+.conn-btn{flex:1;padding:9px;border-radius:10px;border:1px solid var(--line);background:var(--card2);color:var(--txt2);font-size:12px;cursor:pointer;font-family:'Noto Sans KR',sans-serif;transition:all .2s}
+.conn-btn:hover{border-color:var(--a1);color:var(--a1)}
+.conn-btn.primary{background:rgba(0,212,170,.1);border-color:rgba(0,212,170,.3);color:var(--a1)}
+
+/* Drop zone */
+.dropzone{border:1.5px dashed var(--line);border-radius:var(--r);background:var(--card);overflow:hidden;transition:all .25s;cursor:pointer;position:relative;margin-bottom:12px}
+.dropzone.drag{border-color:var(--a1);background:rgba(0,212,170,.04)}
+.dropzone.filled{border-style:solid;border-color:var(--line);cursor:default}
+.drop-placeholder{padding:32px 24px;text-align:center}
+.drop-placeholder .drop-sub{font-size:12px;color:var(--txt2);margin-top:6px}
+.drop-placeholder .drop-hint{display:inline-block;margin-top:12px;font-size:11px;color:var(--txt3);background:var(--card2);border:1px solid var(--line);padding:4px 10px;border-radius:7px}
+#previewImg{display:none;width:100%;max-height:340px;object-fit:contain;border-radius:14px 14px 0 0}
+.dropzone.filled #previewImg{display:block}
+.dropzone.filled .drop-placeholder{display:none}
+
+/* Date detected banner */
+.date-banner{display:none;background:rgba(0,212,170,.08);border-top:1px solid rgba(0,212,170,.2);padding:10px 14px;font-size:12px;color:var(--a1);display:none;align-items:center;gap:8px}
+.date-banner.show{display:flex}
+.replace-btn{display:none;width:100%;padding:10px;background:none;border:none;border-top:1px solid var(--line);color:var(--txt2);font-size:12px;cursor:pointer;font-family:'Noto Sans KR',sans-serif;transition:color .2s}
+.dropzone.filled .replace-btn{display:block}
+.replace-btn:hover{color:var(--a1)}
+#fileInput{display:none}
+
+.cta{width:100%;padding:17px;background:linear-gradient(135deg,#00d4aa,#00b891);border:none;border-radius:var(--r);color:#0b0d14;font-family:'Syne',sans-serif;font-size:16px;font-weight:700;cursor:pointer;transition:all .25s;position:relative;overflow:hidden;letter-spacing:-.2px}
+.cta::after{content:'';position:absolute;top:0;left:-100%;width:100%;height:100%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.15),transparent);transition:left .5s}
+.cta:active::after{left:100%}
+.cta:not(:disabled):hover{transform:translateY(-1px);box-shadow:0 6px 24px rgba(0,212,170,.35)}
+.cta:disabled{opacity:.35;cursor:not-allowed}
+
+.err{display:none;background:rgba(255,107,107,.08);border:1px solid rgba(255,107,107,.25);border-radius:10px;padding:12px 16px;color:var(--neg);font-size:12px;margin-top:12px;line-height:1.6}
+.err.show{display:block}
+
+/* LOADING */
+.loading-wrap{display:none;text-align:center;padding:60px 24px}
+.loading-wrap.show{display:block}
+.loader-ring{width:56px;height:56px;margin:0 auto 28px;position:relative}
+.loader-ring svg{width:100%;height:100%;animation:spin 1.2s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loader-ring circle{fill:none;stroke-width:3;stroke-linecap:round}
+.loader-ring .track{stroke:var(--line)} .loader-ring .fill{stroke:var(--a1);stroke-dasharray:80 100}
+.loading-wrap h3{font-size:16px;font-weight:600;margin-bottom:6px}
+.loading-wrap p{font-size:12px;color:var(--txt2)}
+.step-log{margin-top:28px;display:flex;flex-direction:column;gap:8px;text-align:left;max-width:280px;margin-left:auto;margin-right:auto}
+.log-item{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--txt3);transition:color .4s}
+.log-item.on{color:var(--a2)} .log-item.ok{color:var(--a1)}
+.log-dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0}
+.log-item.on .log-dot{box-shadow:0 0 8px currentColor;animation:blink .8s ease-in-out infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* RESULT PAGE */
+.result-header{padding:24px 0 8px}
+.result-date{font-size:11px;color:var(--txt2);font-family:'JetBrains Mono',monospace;margin-bottom:6px}
+.result-total{font-family:'Syne',sans-serif;font-size:32px;font-weight:800;letter-spacing:-1px;line-height:1}
+.result-total span{font-size:16px;font-weight:600;color:var(--txt2);margin-left:4px}
+.result-pnl{font-size:13px;margin-top:6px;font-family:'JetBrains Mono',monospace}
+
+/* Sheet save status */
+.save-status{display:flex;align-items:center;gap:8px;padding:10px 14px;border-radius:10px;font-size:12px;margin-top:10px;border:1px solid var(--line);background:var(--card);display:none}
+.save-status.show{display:flex}
+.save-status.saving{color:var(--a2);border-color:rgba(79,143,255,.3)}
+.save-status.saved{color:var(--a1);border-color:rgba(0,212,170,.3)}
+.save-status.error{color:var(--neg);border-color:rgba(255,107,107,.3)}
+
+.sec{font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--txt2);margin:28px 0 12px;display:flex;align-items:center;gap:8px}
+.sec::after{content:'';flex:1;height:1px;background:var(--line)}
+
+.kpi-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;position:relative;overflow:hidden}
+.kpi-accent{position:absolute;top:0;left:0;right:0;height:2px}
+.kpi-lbl{font-size:10px;color:var(--txt2);letter-spacing:.5px;margin-bottom:8px}
+.kpi-val{font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:500;line-height:1;margin-bottom:3px}
+.kpi-sub{font-size:10px;color:var(--txt2)}
+
+.chart-card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:16px;margin-bottom:8px}
+.chart-title{font-size:11px;font-weight:600;color:var(--txt2);margin-bottom:14px}
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar-meta{display:flex;justify-content:space-between;margin-bottom:5px}
+.bar-lbl{font-size:12px;color:var(--txt);font-weight:500} .bar-pct{font-size:11px;color:var(--txt2);font-family:'JetBrains Mono',monospace}
+.bar-track{height:4px;background:var(--card2);border-radius:2px;overflow:hidden}
+.bar-fill{height:100%;border-radius:2px;transition:width .9s cubic-bezier(.22,1,.36,1)}
+
+.holding-item{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;margin-bottom:6px;display:grid;grid-template-columns:1fr auto;gap:4px 12px;align-items:start;cursor:pointer;transition:border-color .2s}
+.holding-item:hover{border-color:rgba(255,255,255,.1)}
+.holding-item.expanded{border-color:var(--a2)}
+.h-name{font-size:14px;font-weight:500;line-height:1.3}
+.h-meta{font-size:11px;color:var(--txt2);margin-top:3px;display:flex;gap:6px;flex-wrap:wrap}
+.h-val{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:500;text-align:right}
+.h-rate{font-family:'JetBrains Mono',monospace;font-size:12px;text-align:right}
+.h-detail{display:none;grid-column:1/-1;margin-top:10px;padding-top:10px;border-top:1px solid var(--line);font-size:12px;color:var(--txt2);gap:8px;flex-wrap:wrap}
+.holding-item.expanded .h-detail{display:flex}
+.h-pill{background:var(--card2);border:1px solid var(--line);padding:3px 10px;border-radius:6px;font-size:11px;white-space:nowrap}
+.broker-pill{padding:2px 8px;border-radius:6px;font-size:10px;font-weight:600;white-space:nowrap}
+.chip{display:inline-block;padding:2px 8px;border-radius:5px;font-size:10px;font-weight:600;background:rgba(79,143,255,.12);color:var(--a2)}
+.note-box{background:rgba(255,209,102,.06);border:1px solid rgba(255,209,102,.2);border-radius:10px;padding:12px 14px;font-size:12px;color:var(--a4);line-height:1.7;margin-bottom:8px;display:none}
+.note-box.show{display:block}
+.pos{color:var(--pos)} .neg{color:var(--neg)} .muted{color:var(--txt2)}
+
+.export-row{display:flex;gap:8px;flex-wrap:wrap;margin:20px 0 8px}
+.xbtn{display:inline-flex;align-items:center;gap:6px;padding:10px 14px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--txt2);font-size:12px;font-weight:500;cursor:pointer;transition:all .2s;font-family:'Noto Sans KR',sans-serif;white-space:nowrap;flex:1;justify-content:center}
+.xbtn:hover{border-color:var(--a1);color:var(--a1)}
+.xbtn.primary{background:rgba(0,212,170,.1);border-color:rgba(0,212,170,.3);color:var(--a1)}
+.xbtn.sheet-btn{background:rgba(79,143,255,.1);border-color:rgba(79,143,255,.3);color:var(--a2)}
+
+/* HISTORY PAGE */
+.hist-empty{text-align:center;padding:60px 24px;color:var(--txt2);font-size:13px}
+.hist-card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:16px;margin-bottom:8px;display:grid;grid-template-columns:1fr auto;gap:2px}
+.hist-date{font-size:11px;color:var(--txt2);font-family:'JetBrains Mono',monospace}
+.hist-total{font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:500;margin-top:4px}
+.hist-cnt{font-size:11px;color:var(--txt2)}
+.hist-rate{font-family:'JetBrains Mono',monospace;font-size:14px;text-align:right}
+.hist-sheet-indicator{font-size:10px;margin-top:4px;text-align:right}
+
+/* SETUP PAGE */
+.setup-page-card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:20px;margin-bottom:12px}
+.setup-page-card h3{font-size:14px;font-weight:600;margin-bottom:4px}
+.setup-page-card p{font-size:12px;color:var(--txt2);line-height:1.7;margin-bottom:12px}
+.code-block{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:14px;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--a2);line-height:1.7;overflow-x:auto;position:relative;white-space:pre}
+.copy-code-btn{position:absolute;top:8px;right:8px;background:var(--card2);border:1px solid var(--line);border-radius:6px;padding:4px 10px;font-size:11px;color:var(--txt2);cursor:pointer;font-family:'Noto Sans KR',sans-serif}
+.copy-code-btn:hover{color:var(--a1)}
+.step-num{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;background:rgba(0,212,170,.15);color:var(--a1);border-radius:50%;font-size:11px;font-weight:700;flex-shrink:0;margin-right:8px}
+
+/* BOTTOM NAV */
+.bottom-nav{position:fixed;bottom:0;left:0;right:0;background:rgba(11,13,20,.92);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-top:1px solid rgba(255,255,255,.05);display:flex;padding-bottom:var(--safe-bot);z-index:200;max-width:480px;margin:0 auto}
+.nav-item{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 0 12px;cursor:pointer;transition:color .2s;color:var(--txt2);font-size:10px;border:none;background:none;font-family:'Noto Sans KR',sans-serif}
+.nav-item .nav-icon{font-size:20px;transition:transform .2s}
+.nav-item.active{color:var(--a1)}
+.nav-item.active .nav-icon{transform:scale(1.1)}
+
+/* TOAST */
+.toast{position:fixed;bottom:calc(80px + var(--safe-bot) + 12px);left:50%;transform:translateX(-50%) translateY(20px);background:var(--card2);border:1px solid var(--line);border-radius:20px;padding:10px 20px;font-size:13px;color:var(--txt);white-space:nowrap;opacity:0;transition:all .3s;z-index:999;pointer-events:none;max-width:90vw;text-align:center}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="ios-pad"></div>
+
+  <!-- TOP BAR -->
+  <div class="topbar">
+    <div class="topbar-logo"><div class="logo-dot"></div>포트폴리오</div>
+    <div class="sheet-badge" id="sheetBadge" onclick="goPage('setup')">
+      <div class="dot"></div>
+      <span id="sheetBadgeText">시트 연결</span>
+    </div>
+  </div>
+
+  <!-- ── PAGE: UPLOAD ── -->
+  <div class="page active" id="page-upload">
+    <div class="upload-hero">
+      <div class="upload-icon-wrap">📱</div>
+      <h1>도미노 캡처 <em>한 장</em>으로<br>구글 시트 자동 저장</h1>
+      <p>이미지 파일명에서 날짜를 자동 인식합니다<br>분석 결과가 날짜별 시트로 바로 저장됩니다</p>
+    </div>
+
+    <!-- Sheet connection mini status -->
+    <div class="setup-card" id="setupMiniCard">
+      <div class="setup-header">
+        <div class="setup-icon">📊</div>
+        <div>
+          <div class="setup-title">구글 시트 연결</div>
+          <div class="setup-sub" id="setupMiniSub">Apps Script URL을 입력하면 자동 저장됩니다</div>
+        </div>
+      </div>
+      <input type="url" class="setup-input" id="gasUrlInput" placeholder="https://script.google.com/macros/s/..." autocomplete="off" autocorrect="off" spellcheck="false">
+      <div class="setup-hint">
+        아직 설정 안 하셨다면 → <a onclick="goPage('setup')" style="cursor:pointer">📋 설정 가이드 보기</a>
+      </div>
+      <div class="conn-status-row">
+        <button class="conn-btn primary" onclick="saveGasUrl()">저장</button>
+        <button class="conn-btn" onclick="testConnection()">연결 테스트</button>
+      </div>
+    </div>
+
+    <!-- Drop zone -->
+    <div class="dropzone" id="dropzone">
+      <img id="previewImg" alt="미리보기">
+      <div class="date-banner" id="dateBanner">
+        <span>📅</span>
+        <span id="dateBannerText"></span>
+      </div>
+      <button class="replace-btn" onclick="resetImg(event)">↺ 다른 이미지로 교체</button>
+      <div class="drop-placeholder">
+        <div style="font-size:36px;margin-bottom:10px">🖼️</div>
+        <div style="font-size:15px;font-weight:600;margin-bottom:5px">이미지를 여기에 올려주세요</div>
+        <div class="drop-sub">탭하여 선택 · 드래그 &amp; 드롭</div>
+        <div class="drop-hint">PNG · JPG · JPEG</div>
+      </div>
+      <input type="file" id="fileInput" accept="image/*" capture="environment">
+    </div>
+
+    <div class="err" id="errBox"></div>
+    <button class="cta" id="analyzeBtn" disabled onclick="analyze()">분석하기</button>
+
+    <div class="loading-wrap" id="loadingWrap">
+      <div class="loader-ring">
+        <svg viewBox="0 0 36 36">
+          <circle class="track" cx="18" cy="18" r="15.9"/>
+          <circle class="fill" cx="18" cy="18" r="15.9" transform="rotate(-90 18 18)"/>
+        </svg>
+      </div>
+      <h3>AI가 분석 중입니다</h3>
+      <p>잠시만 기다려주세요</p>
+      <div class="step-log">
+        <div class="log-item" id="l1"><span class="log-dot"></span>파일명에서 날짜 추출</div>
+        <div class="log-item" id="l2"><span class="log-dot"></span>종목명 · 수량 · 평가금액 인식</div>
+        <div class="log-item" id="l3"><span class="log-dot"></span>국가 · 섹터 · 증권사 분류</div>
+        <div class="log-item" id="l4"><span class="log-dot"></span>구글 시트에 저장 중</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── PAGE: RESULT ── -->
+  <div class="page" id="page-result">
+    <div class="result-header">
+      <div class="result-date" id="rDate"></div>
+      <div class="result-total" id="rTotal"></div>
+      <div class="result-pnl" id="rPnl"></div>
+    </div>
+
+    <div class="save-status" id="saveStatus"></div>
+
+    <div class="sec">요약</div>
+    <div class="kpi-grid" id="kpiGrid"></div>
+
+    <div class="sec">자산 비중</div>
+    <div id="chartsWrap"></div>
+
+    <div class="sec">보유 종목 <span style="font-size:10px;color:var(--a1);margin-left:4px" id="holdingCnt"></span></div>
+    <div class="note-box" id="noteBox"></div>
+    <div id="holdingList"></div>
+
+    <div class="export-row">
+      <button class="xbtn sheet-btn" id="sheetSaveBtn" onclick="saveToSheet()">📊 시트에 저장</button>
+      <button class="xbtn" onclick="copySheet()">📋 복사</button>
+      <button class="xbtn" onclick="dlCSV()">⬇️ CSV</button>
+    </div>
+  </div>
+
+  <!-- ── PAGE: HISTORY ── -->
+  <div class="page" id="page-history">
+    <div class="sec" style="margin-top:24px">주간 기록</div>
+    <div id="histList"></div>
+  </div>
+
+  <!-- ── PAGE: SETUP ── -->
+  <div class="page" id="page-setup">
+    <div class="sec" style="margin-top:24px">구글 시트 자동화 설정</div>
+
+    <div class="setup-page-card">
+      <h3><span class="step-num">1</span>구글 시트 준비</h3>
+      <p><a href="https://sheets.new" target="_blank" style="color:var(--a1)">sheets.new</a> 에서 새 스프레드시트를 만드세요.<br>만들고 나서 URL에서 ID를 복사해두세요.</p>
+      <div class="code-block" style="font-size:12px;word-break:break-all;white-space:normal">https://docs.google.com/spreadsheets/d/<span style="color:var(--a4)">【여기가 ID】</span>/edit</div>
+    </div>
+
+    <div class="setup-page-card">
+      <h3><span class="step-num">2</span>Apps Script 설치</h3>
+      <p>스프레드시트에서 <strong style="color:var(--txt)">확장 프로그램 → Apps Script</strong>를 클릭하고, 아래 코드를 붙여넣으세요.</p>
+      <div style="position:relative">
+        <div class="code-block" id="gasCodeBlock"></div>
+        <button class="copy-code-btn" onclick="copyGASCode()">복사</button>
+      </div>
+    </div>
+
+    <div class="setup-page-card">
+      <h3><span class="step-num">3</span>웹앱으로 배포</h3>
+      <p>
+        1. Apps Script에서 <strong style="color:var(--txt)">배포 → 새 배포</strong> 클릭<br>
+        2. 유형: <strong style="color:var(--txt)">웹 앱</strong> 선택<br>
+        3. 액세스: <strong style="color:var(--txt)">"모든 사용자"</strong> 선택<br>
+        4. 배포 후 나오는 <strong style="color:var(--a1)">URL 복사</strong>
+      </p>
+    </div>
+
+    <div class="setup-page-card" id="setupPageCard">
+      <h3><span class="step-num">4</span>URL 입력</h3>
+      <p>복사한 Apps Script 웹앱 URL을 아래에 입력하세요.</p>
+      <input type="url" class="setup-input" id="gasUrlInput2" placeholder="https://script.google.com/macros/s/..." autocomplete="off">
+      <div class="conn-status-row" style="margin-top:10px">
+        <button class="conn-btn primary" onclick="saveGasUrl2()">저장 및 연결</button>
+        <button class="conn-btn" onclick="testConnection()">연결 테스트</button>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /shell -->
+
+<!-- Bottom Nav -->
+<div class="bottom-nav">
+  <button class="nav-item active" id="nav-upload" onclick="goPage('upload')"><span class="nav-icon">📷</span>분석</button>
+  <button class="nav-item" id="nav-result" onclick="goPage('result')"><span class="nav-icon">📊</span>결과</button>
+  <button class="nav-item" id="nav-history" onclick="goPage('history')"><span class="nav-icon">📅</span>기록</button>
+  <button class="nav-item" id="nav-setup" onclick="goPage('setup')"><span class="nav-icon">⚙️</span>설정</button>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── PALETTE ──
+const P=['#00d4aa','#4f8fff','#ffd166','#ff6b6b','#c084fc','#fb923c','#34d399','#f472b6'];
+const FLAG={'미국':'🇺🇸','한국':'🇰🇷','일본':'🇯🇵','중국':'🇨🇳','영국':'🇬🇧','독일':'🇩🇪','인도':'🇮🇳'};
+const BSTYLE={'메리츠증권':'background:rgba(255,107,107,.12);color:#ff8a8a','유안타증권':'background:rgba(79,143,255,.12);color:#7aabff','한국투자증권':'background:rgba(0,212,170,.12);color:#00d4aa','나무증권':'background:rgba(255,209,102,.12);color:#ffd166','알수없음':'background:rgba(255,255,255,.05);color:#6b7090'};
+
+// ── STATE ──
+let imgFile=null, imgB64=null, result=null, detectedDate=null;
+let history=JSON.parse(sessionStorage.getItem('pfh')||'[]');
+let gasUrl=localStorage.getItem('gasUrl')||'';
+
+// ── GAS CODE ──
+const GAS_CODE=`// =============================================
+// 포트폴리오 분석기 - Google Apps Script
+// =============================================
+// 설치 방법:
+// 1. 스프레드시트 → 확장 프로그램 → Apps Script
+// 2. 이 코드 전체를 붙여넣기
+// 3. 배포 → 새 배포 → 웹앱 → 모든사용자 → 배포
+// 4. 배포 URL을 앱에 입력
+
+function doPost(e) {
+  try {
+    const data = JSON.parse(e.postData.contents);
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    
+    // 날짜별 시트 이름 (예: 2026-03-14)
+    const sheetName = data.date;
+    
+    // 해당 날짜 시트가 없으면 새로 생성
+    let sheet = ss.getSheetByName(sheetName);
+    if (!sheet) {
+      sheet = ss.insertSheet(sheetName);
+      // 헤더 행 작성
+      const headers = ['증권사','종목명','투자국가','섹터','평가금액(원)','보유수량','수익률(%)'];
+      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+      
+      // 헤더 스타일
+      const hRange = sheet.getRange(1, 1, 1, headers.length);
+      hRange.setBackground('#1a1e2e')
+            .setFontColor('#00d4aa')
+            .setFontWeight('bold')
+            .setFontSize(11);
+      sheet.setFrozenRows(1);
+    }
+    
+    // 기존 데이터 삭제 후 새로 작성 (재업로드 시 덮어쓰기)
+    const lastRow = sheet.getLastRow();
+    if (lastRow > 1) {
+      sheet.deleteRows(2, lastRow - 1);
+    }
+    
+    // 종목 데이터 작성
+    const holdings = data.holdings || [];
+    if (holdings.length > 0) {
+      const rows = holdings.map(h => [
+        h.broker || '',
+        h.name || '',
+        h.country || '',
+        h.sector || '',
+        h.value || 0,
+        h.shares || 0,
+        h.return_rate || 0
+      ]);
+      sheet.getRange(2, 1, rows.length, 7).setValues(rows);
+      
+      // 수익률 컬럼 색상
+      for (let i = 0; i < holdings.length; i++) {
+        const rate = holdings[i].return_rate || 0;
+        const cell = sheet.getRange(i + 2, 7);
+        cell.setFontColor(rate >= 0 ? '#00d4aa' : '#ff6b6b');
+      }
+      
+      // 금액 컬럼 숫자 포맷
+      sheet.getRange(2, 5, rows.length, 1)
+           .setNumberFormat('#,##0');
+    }
+    
+    // 요약 행 추가
+    const summaryRow = lastRow > 1 ? holdings.length + 2 : holdings.length + 2;
+    sheet.getRange(summaryRow + 1, 1).setValue('💰 현금');
+    sheet.getRange(summaryRow + 1, 5).setValue(data.cash || 0)
+         .setNumberFormat('#,##0');
+    
+    // 총자산 표시
+    const totalStock = holdings.reduce((s, h) => s + (h.value || 0), 0);
+    const total = totalStock + (data.cash || 0);
+    sheet.getRange(summaryRow + 2, 1).setValue('📊 총 자산');
+    sheet.getRange(summaryRow + 2, 5).setValue(total)
+         .setNumberFormat('#,##0')
+         .setFontWeight('bold');
+    
+    // 열 너비 자동 조정
+    sheet.autoResizeColumns(1, 7);
+    
+    // 요약 시트 업데이트
+    updateSummarySheet(ss, data, sheetName, total);
+    
+    return ContentService
+      .createTextOutput(JSON.stringify({success: true, sheet: sheetName, rows: holdings.length}))
+      .setMimeType(ContentService.MimeType.JSON);
+      
+  } catch(err) {
+    return ContentService
+      .createTextOutput(JSON.stringify({success: false, error: err.message}))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+function updateSummarySheet(ss, data, sheetName, total) {
+  let summary = ss.getSheetByName('📈 요약');
+  if (!summary) {
+    summary = ss.insertSheet('📈 요약');
+    summary.getRange(1, 1, 1, 5).setValues([['날짜','총자산(원)','종목수','평균수익률(%)','현금(원)']]);
+    const hRange = summary.getRange(1, 1, 1, 5);
+    hRange.setBackground('#1a1e2e').setFontColor('#00d4aa').setFontWeight('bold');
+    summary.setFrozenRows(1);
+    // 요약 시트를 첫 번째로 이동
+    ss.setActiveSheet(summary);
+    ss.moveActiveSheet(1);
+  }
+  
+  const holdings = data.holdings || [];
+  const avgR = holdings.length 
+    ? holdings.reduce((s, h) => s + (h.return_rate || 0), 0) / holdings.length 
+    : 0;
+  
+  // 같은 날짜 행이 있으면 업데이트, 없으면 추가
+  const allData = summary.getDataRange().getValues();
+  let found = false;
+  for (let i = 1; i < allData.length; i++) {
+    if (allData[i][0] === sheetName) {
+      summary.getRange(i + 1, 2, 1, 4).setValues([[total, holdings.length, avgR, data.cash || 0]]);
+      found = true;
+      break;
+    }
+  }
+  if (!found) {
+    summary.appendRow([sheetName, total, holdings.length, avgR, data.cash || 0]);
+  }
+  
+  summary.getRange(2, 2, summary.getLastRow() - 1, 1).setNumberFormat('#,##0');
+  summary.autoResizeColumns(1, 5);
+}
+
+function doGet(e) {
+  return ContentService
+    .createTextOutput(JSON.stringify({status: 'ok', message: '포트폴리오 분석기 연결 성공!'}))
+    .setMimeType(ContentService.MimeType.JSON);
+}`;
+
+// ── INIT ──
+document.getElementById('gasCodeBlock').textContent = GAS_CODE;
+if (gasUrl) {
+  document.getElementById('gasUrlInput').value = gasUrl;
+  document.getElementById('gasUrlInput2').value = gasUrl;
+  updateSheetBadge(true);
+}
+renderHistory();
+
+// ── PAGE ROUTING ──
+function goPage(p) {
+  document.querySelectorAll('.page').forEach(el=>el.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(el=>el.classList.remove('active'));
+  document.getElementById('page-'+p).classList.add('active');
+  document.getElementById('nav-'+p).classList.add('active');
+  window.scrollTo(0,0);
+}
+
+// ── SHEET URL ──
+function saveGasUrl() {
+  const url = document.getElementById('gasUrlInput').value.trim();
+  if (!url) { toast('⚠️ URL을 입력하세요'); return; }
+  gasUrl = url;
+  localStorage.setItem('gasUrl', url);
+  document.getElementById('gasUrlInput2').value = url;
+  updateSheetBadge(true);
+  toast('✅ 저장됨');
+}
+
+function saveGasUrl2() {
+  const url = document.getElementById('gasUrlInput2').value.trim();
+  if (!url) { toast('⚠️ URL을 입력하세요'); return; }
+  gasUrl = url;
+  localStorage.setItem('gasUrl', url);
+  document.getElementById('gasUrlInput').value = url;
+  updateSheetBadge(true);
+  testConnection();
+}
+
+function updateSheetBadge(connected) {
+  const badge = document.getElementById('sheetBadge');
+  const text = document.getElementById('sheetBadgeText');
+  if (connected && gasUrl) {
+    badge.classList.add('connected');
+    text.textContent = '시트 연결됨';
+    document.getElementById('setupMiniCard').classList.add('connected');
+  } else {
+    badge.classList.remove('connected');
+    text.textContent = '시트 연결';
+    document.getElementById('setupMiniCard').classList.remove('connected');
+  }
+}
+
+async function testConnection() {
+  if (!gasUrl) { toast('⚠️ URL을 먼저 입력하세요'); return; }
+  toast('🔄 연결 테스트 중...');
+  try {
+    const res = await fetch(gasUrl, { method:'GET', mode:'no-cors' });
+    updateSheetBadge(true);
+    toast('✅ 연결 성공! 구글 시트와 연결되었습니다');
+  } catch(e) {
+    toast('⚠️ 연결 확인 필요 - 배포 설정을 확인하세요');
+  }
+}
+
+// ── DATE EXTRACTION ──
+function extractDateFromFilename(filename) {
+  // Screenshot_20260314_153604_DOMINO.png → 2026-03-14
+  const m = filename.match(/(\d{4})(\d{2})(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  // 다른 패턴 시도: 2026-03-14, 2026.03.14
+  const m2 = filename.match(/(\d{4})[-.](\d{2})[-.](\d{2})/);
+  if (m2) return `${m2[1]}-${m2[2]}-${m2[3]}`;
+  return null;
+}
+
+// ── UPLOAD ──
+const dz = document.getElementById('dropzone');
+const fi = document.getElementById('fileInput');
+
+dz.addEventListener('click', e=>{ if(!e.target.closest('.replace-btn')) fi.click(); });
+fi.addEventListener('change', e=> e.target.files[0] && loadImg(e.target.files[0]));
+dz.addEventListener('dragover', e=>{ e.preventDefault(); dz.classList.add('drag'); });
+dz.addEventListener('dragleave', ()=> dz.classList.remove('drag'));
+dz.addEventListener('drop', e=>{ e.preventDefault(); dz.classList.remove('drag'); loadImg(e.dataTransfer.files[0]); });
+
+function loadImg(file) {
+  if (!file.type.startsWith('image/')) return;
+  imgFile = file;
+
+  // 파일명에서 날짜 추출
+  detectedDate = extractDateFromFilename(file.name);
+  const banner = document.getElementById('dateBanner');
+  if (detectedDate) {
+    document.getElementById('dateBannerText').textContent = `📅 날짜 인식: ${detectedDate} (파일명: ${file.name})`;
+    banner.classList.add('show');
+  } else {
+    detectedDate = new Date().toISOString().split('T')[0];
+    document.getElementById('dateBannerText').textContent = `📅 날짜 미인식 → 오늘(${detectedDate})로 저장됩니다`;
+    banner.classList.add('show');
+  }
+
+  const r = new FileReader();
+  r.onload = e => {
+    imgB64 = e.target.result.split(',')[1];
+    document.getElementById('previewImg').src = e.target.result;
+    dz.classList.add('filled');
+    const btn = document.getElementById('analyzeBtn');
+    btn.disabled = false;
+    btn.textContent = `✦  분석하기 (${detectedDate})`;
+  };
+  r.readAsDataURL(file);
+}
+
+function resetImg(e) {
+  e.stopPropagation();
+  imgFile=null; imgB64=null; detectedDate=null;
+  document.getElementById('previewImg').src='';
+  dz.classList.remove('filled');
+  document.getElementById('dateBanner').classList.remove('show');
+  const btn=document.getElementById('analyzeBtn');
+  btn.disabled=true; btn.textContent='분석하기';
+  fi.value='';
+}
+
+// ── ANALYZE ──
+async function analyze() {
+  document.getElementById('errBox').classList.remove('show');
+  document.getElementById('analyzeBtn').style.display='none';
+  document.getElementById('loadingWrap').classList.add('show');
+  ['l1','l2','l3','l4'].forEach(id=>document.getElementById(id).className='log-item');
+  
+  // Step 1: date (instant)
+  document.getElementById('l1').className='log-item on';
+  await sleep(400);
+  document.getElementById('l1').className='log-item ok';
+  document.getElementById('l2').className='log-item on';
+
+  try {
+    result = await callClaude();
+    result.date = detectedDate || new Date().toISOString().split('T')[0];
+
+    document.getElementById('l2').className='log-item ok';
+    document.getElementById('l3').className='log-item on';
+    await sleep(300);
+    document.getElementById('l3').className='log-item ok';
+
+    // Step 4: save to sheet
+    document.getElementById('l4').className='log-item on';
+    let sheetSaved = false;
+    if (gasUrl) {
+      sheetSaved = await saveToSheetInternal(result);
+    }
+    document.getElementById('l4').className='log-item ok';
+
+    document.getElementById('loadingWrap').classList.remove('show');
+    document.getElementById('analyzeBtn').style.display='';
+    renderResult(sheetSaved);
+    goPage('result');
+  } catch(err) {
+    document.getElementById('loadingWrap').classList.remove('show');
+    document.getElementById('analyzeBtn').style.display='';
+    const eb=document.getElementById('errBox');
+    eb.textContent='❌ '+err.message;
+    eb.classList.add('show');
+  }
+}
+
+function sleep(ms) { return new Promise(r=>setTimeout(r,ms)); }
+
+async function callClaude() {
+  const prompt=`당신은 주식 포트폴리오 분석 전문가입니다.
+이 이미지는 '도미노' 자산관리 앱의 전체 잔고 화면입니다.
+메리츠증권, 유안타증권, 한국투자증권, 나무증권(NH) 등 여러 계좌가 합산되어 표시됩니다.
+
+이미지에서 모든 보유 종목을 추출해 아래 JSON으로만 응답하세요. 마크다운 없이 순수 JSON만 출력.
+
+{
+  "holdings": [
+    {
+      "broker": "증권사명 (메리츠증권/유안타증권/한국투자증권/나무증권/알수없음)",
+      "name": "종목명",
+      "country": "미국/한국/일본/중국/기타",
+      "sector": "IT/금융/헬스케어/소비재/에너지/산업재/통신/부동산/소재/유틸리티/기타",
+      "value": 평가금액(숫자 원화),
+      "shares": 보유수량(숫자),
+      "return_rate": 수익률(숫자 예:12.5 또는 -3.2)
+    }
+  ],
+  "cash": 현금총액(숫자 원화 없으면0),
+  "notes": "읽기어려운부분메모 없으면빈문자열"
+}
+
+규칙: 증권사구분불가→알수없음 / 섹터불명→종목명으로추정 / 외화→원화환산`;
+
+  const res=await fetch('https://api.anthropic.com/v1/messages',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({
+      model:'claude-sonnet-4-20250514',
+      max_tokens:4096,
+      messages:[{role:'user',content:[
+        {type:'image',source:{type:'base64',media_type:imgFile.type||'image/jpeg',data:imgB64}},
+        {type:'text',text:prompt}
+      ]}]
+    })
+  });
+
+  if(!res.ok){
+    const e=await res.json().catch(()=>({}));
+    throw new Error(e.error?.message||`서버 오류 (${res.status})`);
+  }
+
+  const d=await res.json();
+  const raw=d.content.map(b=>b.text||'').join('').replace(/```json|```/g,'').trim();
+  try { return JSON.parse(raw); }
+  catch { throw new Error('AI 응답 파싱 실패. 다시 시도해주세요.'); }
+}
+
+// ── SHEET SAVE ──
+async function saveToSheetInternal(data) {
+  if (!gasUrl) return false;
+  try {
+    await fetch(gasUrl, {
+      method:'POST',
+      mode:'no-cors',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(data)
+    });
+    return true;
+  } catch(e) {
+    return false;
+  }
+}
+
+async function saveToSheet() {
+  if (!result) return;
+  if (!gasUrl) { goPage('setup'); toast('⚠️ 먼저 구글 시트를 연결하세요'); return; }
+  
+  const ss = document.getElementById('saveStatus');
+  ss.className='save-status show saving';
+  ss.innerHTML='🔄 구글 시트에 저장 중...';
+
+  const ok = await saveToSheetInternal(result);
+  if (ok) {
+    ss.className='save-status show saved';
+    ss.innerHTML=`✅ <strong>${result.date}</strong> 시트에 저장 완료!`;
+    saveHistory(true);
+  } else {
+    ss.className='save-status show error';
+    ss.innerHTML='❌ 저장 실패. 연결 설정을 확인하세요.';
+  }
+}
+
+// ── RENDER RESULT ──
+function renderResult(sheetSaved=false) {
+  const h=result.holdings||[], cash=result.cash||0;
+  const tStock=h.reduce((s,x)=>s+(x.value||0),0);
+  const total=tStock+cash;
+  const avgR=h.length?h.reduce((s,x)=>s+(x.return_rate||0),0)/h.length:0;
+
+  document.getElementById('rDate').textContent=result.date || '';
+  document.getElementById('rTotal').innerHTML=`${money(total)}<span>원</span>`;
+  const rc=avgR>=0?'pos':'neg';
+  document.getElementById('rPnl').innerHTML=`<span class="${rc}">${sign(avgR)}${avgR.toFixed(2)}% 평균 수익률</span> · ${h.length}개 종목`;
+
+  // Save status
+  const ss=document.getElementById('saveStatus');
+  if (sheetSaved) {
+    ss.className='save-status show saved';
+    ss.innerHTML=`✅ <strong>${result.date}</strong> 시트에 자동 저장 완료!`;
+    saveHistory(true);
+  } else if (!gasUrl) {
+    ss.className='save-status show';
+    ss.style.color='var(--txt2)';
+    ss.innerHTML='💡 구글 시트 미연결 — 설정 탭에서 연결하세요';
+  } else {
+    ss.classList.remove('show');
+  }
+
+  // KPI
+  document.getElementById('kpiGrid').innerHTML=
+    kpi('총 자산',money(total)+'원',h.length+'개 종목','#00d4aa')+
+    kpi('주식',money(tStock)+'원',pct(tStock,total)+'% 비중','#4f8fff')+
+    kpi('현금',money(cash)+'원',pct(cash,total)+'% 비중','#ffd166')+
+    kpi('평균수익률',sign(avgR)+avgR.toFixed(2)+'%',h.length+'종목 기준',avgR>=0?'#00d4aa':'#ff6b6b');
+
+  // Charts
+  const cw=document.getElementById('chartsWrap'); cw.innerHTML='';
+  const totSh=h.reduce((s,x)=>s+(x.shares||0),0);
+  cw.appendChild(mkChart('국가별 자산 비중',grp(h,'country','value'),tStock));
+  cw.appendChild(mkChart('섹터별 투자 비중',grp(h,'sector','value'),tStock));
+  cw.appendChild(mkChart('국가별 수량 비중',grp(h,'country','shares'),totSh));
+  cw.appendChild(mkChart('주식 / 현금',{'주식':tStock,'현금':cash},total));
+
+  // Holdings
+  document.getElementById('holdingCnt').textContent=h.length+'개';
+  const nb=document.getElementById('noteBox');
+  if(result.notes){nb.textContent='⚠️ '+result.notes;nb.classList.add('show');}
+  else nb.classList.remove('show');
+
+  const hl=document.getElementById('holdingList'); hl.innerHTML='';
+  h.sort((a,b)=>(b.value||0)-(a.value||0)).forEach(x=>{
+    const rr=x.return_rate||0, rc=rr>0?'pos':rr<0?'neg':'muted';
+    const bst=BSTYLE[x.broker]||BSTYLE['알수없음'];
+    const fl=FLAG[x.country]||'🌐';
+    const div=document.createElement('div');
+    div.className='holding-item';
+    div.innerHTML=`
+      <div>
+        <div class="h-name">${x.name||'-'}</div>
+        <div class="h-meta">
+          <span class="broker-pill" style="${bst}">${x.broker||'-'}</span>
+          <span>${fl} ${x.country||'-'}</span>
+          <span class="chip">${x.sector||'-'}</span>
+        </div>
+      </div>
+      <div>
+        <div class="h-val">${money(x.value)}원</div>
+        <div class="h-rate ${rc}">${sign(rr)}${rr.toFixed(2)}%</div>
+      </div>
+      <div class="h-detail">
+        <span class="h-pill">수량 ${(x.shares||0).toLocaleString()}</span>
+        <span class="h-pill">금액 ${(x.value||0).toLocaleString()}원</span>
+        <span class="h-pill ${rc}">수익률 ${sign(rr)}${rr.toFixed(2)}%</span>
+      </div>`;
+    div.addEventListener('click',()=>div.classList.toggle('expanded'));
+    hl.appendChild(div);
+  });
+}
+
+// ── HISTORY ──
+function saveHistory(sheetSaved=false) {
+  if(!result) return;
+  const h=result.holdings||[];
+  const total=h.reduce((s,x)=>s+(x.value||0),0)+(result.cash||0);
+  const avgR=h.length?h.reduce((s,x)=>s+(x.return_rate||0),0)/h.length:0;
+  // 같은 날짜면 업데이트
+  const idx=history.findIndex(r=>r.date===result.date);
+  const rec={date:result.date,total,avgR,count:h.length,sheetSaved};
+  if(idx>=0) history[idx]=rec;
+  else history.unshift(rec);
+  sessionStorage.setItem('pfh',JSON.stringify(history));
+  renderHistory();
+}
+
+function renderHistory() {
+  const el=document.getElementById('histList');
+  if(!history.length){
+    el.innerHTML='<div class="hist-empty">📭 저장된 기록이 없습니다<br><span style="font-size:11px;margin-top:6px;display:block;">분석 후 자동으로 여기에 기록됩니다</span></div>';
+    return;
+  }
+  el.innerHTML=history.map(h=>{
+    const rc=h.avgR>=0?'pos':'neg';
+    const sheetIndicator=h.sheetSaved?'<div class="hist-sheet-indicator" style="color:var(--a1)">✅ 시트 저장됨</div>':'<div class="hist-sheet-indicator" style="color:var(--txt2)">— 시트 미저장</div>';
+    return `<div class="hist-card">
+      <div><div class="hist-date">${h.date}</div><div class="hist-total">${money(h.total)}원</div><div class="hist-cnt">${h.count}개 종목</div></div>
+      <div><div class="hist-rate ${rc}">${sign(h.avgR)}${h.avgR.toFixed(2)}%</div>${sheetIndicator}</div>
+    </div>`;
+  }).join('');
+}
+
+// ── EXPORT ──
+function copySheet() {
+  if(!result) return;
+  const hdrs=['날짜','증권사','종목명','투자국가','섹터','평가금액','보유수량','수익률(%)'];
+  const rows=(result.holdings||[]).map(x=>[result.date,x.broker,x.name,x.country,x.sector,x.value,x.shares,x.return_rate].join('\t'));
+  navigator.clipboard.writeText([hdrs.join('\t'),...rows].join('\n')).then(()=>toast('✅ 클립보드에 복사됨'));
+}
+
+function dlCSV() {
+  if(!result) return;
+  const hdrs=['날짜','증권사','종목명','투자국가','섹터','평가금액','보유수량','수익률(%)'];
+  const rows=(result.holdings||[]).map(x=>[result.date,x.broker,x.name,x.country,x.sector,x.value,x.shares,x.return_rate].join(','));
+  const blob=new Blob(['\uFEFF'+[hdrs.join(','),...rows].join('\n')],{type:'text/csv;charset=utf-8;'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=`portfolio_${(result.date||'').replace(/-/g,'')}.csv`;
+  a.click();
+  toast('⬇️ CSV 다운로드');
+}
+
+function copyGASCode() {
+  navigator.clipboard.writeText(GAS_CODE).then(()=>toast('✅ 코드 복사됨! Apps Script에 붙여넣으세요'));
+}
+
+// ── HELPERS ──
+function kpi(lbl,val,sub,color){
+  return `<div class="kpi"><div class="kpi-accent" style="background:${color}"></div><div class="kpi-lbl">${lbl}</div><div class="kpi-val" style="color:${color}">${val}</div><div class="kpi-sub">${sub}</div></div>`;
+}
+
+function mkChart(title,data,total){
+  const box=document.createElement('div');
+  box.className='chart-card';
+  const entries=Object.entries(data).sort((a,b)=>b[1]-a[1]);
+  box.innerHTML=`<div class="chart-title">${title}</div><div class="bars">${
+    entries.map(([k,v],i)=>{
+      const p=total>0?(v/total*100).toFixed(1):0;
+      return `<div class="bar-row"><div class="bar-meta"><span class="bar-lbl">${FLAG[k]||''} ${k}</span><span class="bar-pct">${p}%</span></div><div class="bar-track"><div class="bar-fill" style="width:${p}%;background:${P[i%P.length]}"></div></div></div>`;
+    }).join('')
+  }</div>`;
+  return box;
+}
+
+function grp(arr,k,v){const m={};arr.forEach(x=>{const key=x[k]||'기타';m[key]=(m[key]||0)+(x[v]||0);});return m;}
+function money(n){if(!n)return '0';if(n>=1e8)return(n/1e8).toFixed(1)+'억';if(n>=1e4)return Math.round(n/1e4)+'만';return n.toLocaleString();}
+function pct(a,b){return b>0?(a/b*100).toFixed(1):'0';}
+function sign(n){return n>0?'+':'';}
+
+let toastTimer;
+function toast(msg){
+  const el=document.getElementById('toast');
+  el.textContent=msg; el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>el.classList.remove('show'),2800);
+}
+</script>
+</body>
+</html>
