@@ -397,7 +397,9 @@ const GAS_CODE=`// =============================================
 
 function doPost(e) {
   try {
-    const data = JSON.parse(e.postData.contents);
+    // Content-Type 관계없이 postData.contents 에서 파싱
+    const raw = e.postData ? e.postData.contents : '{}';
+    const data = JSON.parse(raw);
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     
     // 날짜별 시트 이름 (예: 2026-03-14)
@@ -898,14 +900,16 @@ async function callClaude() {
 async function saveToSheetInternal(data) {
   if (!gasUrl) return false;
   try {
+    // Apps Script는 no-cors + text/plain 으로 전송해야 모든 브라우저에서 동작
     await fetch(gasUrl, {
-      method:'POST',
-      mode:'no-cors',
-      headers:{'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-      body:JSON.stringify(data)
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify(data)
     });
     return true;
   } catch(e) {
+    console.error('Sheet save error:', e);
     return false;
   }
 }
