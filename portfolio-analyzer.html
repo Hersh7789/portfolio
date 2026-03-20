@@ -415,6 +415,39 @@ function doPost(e) {
     // Content-Type 관계없이 postData.contents 에서 파싱
     const raw = e.postData ? e.postData.contents : '{}';
     const data = JSON.parse(raw);
+    
+    // getSectorMap 액션 처리 (POST로도 가능)
+    if (data.action === 'getSectorMap') {
+      const ss = SpreadsheetApp.getActiveSpreadsheet();
+      let sheet = ss.getSheetByName('섹터매핑');
+      if (!sheet) {
+        sheet = ss.insertSheet('섹터매핑');
+        sheet.getRange(1, 1, 1, 2).setValues([['종목명', '섹터']]);
+        sheet.getRange(1, 1, 1, 2).setBackground('#1a1e2e').setFontColor('#00d4aa').setFontWeight('bold');
+        sheet.getRange(2, 1, 5, 2).setValues([
+          ['삼성전자', 'IT'],
+          ['AAPL', 'IT'],
+          ['NVDA', 'IT'],
+          ['GOOGL', 'IT'],
+          ['AGNC', '금융']
+        ]);
+        sheet.autoResizeColumns(1, 2);
+      }
+      const lastRow = sheet.getLastRow();
+      const sectorMap = {};
+      if (lastRow > 1) {
+        const rows = sheet.getRange(2, 1, lastRow - 1, 2).getValues();
+        rows.forEach(r => {
+          const name = (r[0] || '').toString().trim();
+          const sector = (r[1] || '').toString().trim();
+          if (name && sector) sectorMap[name] = sector;
+        });
+      }
+      return ContentService
+        .createTextOutput(JSON.stringify({ status: 'ok', sectorMap }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+    
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     
     // 날짜별 시트 이름 (예: 2026-03-14)
@@ -746,19 +779,21 @@ function doGet(e) {
         });
       }
       
-      return ContentService
-        .createTextOutput(JSON.stringify({ status: 'ok', sectorMap }))
-        .setMimeType(ContentService.MimeType.JSON);
+      return makeResponse({ status: 'ok', sectorMap });
     } catch(err) {
-      return ContentService
-        .createTextOutput(JSON.stringify({ status: 'error', error: err.message }))
-        .setMimeType(ContentService.MimeType.JSON);
+      return makeResponse({ status: 'error', error: err.message });
     }
   }
   
-  return ContentService
-    .createTextOutput(JSON.stringify({ status: 'ok', message: '포트폴리오 분석기 연결 성공!' }))
+  return makeResponse({ status: 'ok', message: '포트폴리오 분석기 연결 성공!' });
+}
+
+// CORS 허용 응답 헬퍼
+function makeResponse(obj) {
+  const output = ContentService
+    .createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
+  return output;
 }`;
 
 // ── INIT ──
@@ -837,17 +872,30 @@ function toggleApiKeyVisible() {
 async function loadSectorMap() {
   if (!gasUrl) return;
   try {
-    const res = await fetch(gasUrl + '?action=getSectorMap', { method: 'GET' });
-    const data = await res.json();
-    if (data.status === 'ok' && data.sectorMap) {
+    // POST로 섹터맵 요청 (GET CORS 문제 우회)
+    const res = await fetch(gasUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ action: 'getSectorMap' })
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const text = await res.text();
+    if (text.trim().startsWith('<')) {
+      throw new Error('Apps Script 재배포가 필요합니다');
+    }
+    const data = JSON.parse(text);
+    if (data.sectorMap) {
       sectorMap = data.sectorMap;
       const count = Object.keys(sectorMap).length;
-      document.getElementById('sectorMapStatus').textContent =
-        count > 0 ? `✅ 섹터매핑 ${count}개 종목 로드됨` : '📋 섹터매핑 시트가 비어있습니다';
-      console.log('섹터매핑 로드:', count, '개');
+      const statusEl = document.getElementById('sectorMapStatus');
+      if (statusEl) statusEl.textContent =
+        count > 0 ? `✅ 섹터매핑 ${count}개 종목 로드됨` : '📋 섹터매핑 시트가 비어있어요 - 스프레드시트에서 직접 입력하세요';
+      console.log('섹터매핑 로드 성공:', count, '개');
     }
   } catch(e) {
-    console.log('섹터매핑 로드 실패:', e);
+    console.log('섹터매핑 로드 실패:', e.message);
+    const statusEl = document.getElementById('sectorMapStatus');
+    if (statusEl) statusEl.textContent = '⚠️ 로드 실패: ' + e.message + ' — Apps Script를 재배포해주세요';
   }
 }
 
