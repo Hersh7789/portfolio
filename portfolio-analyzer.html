@@ -450,6 +450,13 @@ function doPost(e) {
     
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     
+    // date 없으면 즉시 에러 반환 (잘못된 요청 방어)
+    if (!data.date || !/^\d{4}-\d{2}-\d{2}$/.test(data.date)) {
+      return ContentService
+        .createTextOutput(JSON.stringify({ success: false, error: 'invalid date: ' + data.date }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+    
     // 날짜별 시트 이름 (예: 2026-03-14)
     const sheetName = data.date;
     
@@ -611,6 +618,7 @@ function getPrevShares(ss, currentSheetName) {
 }
 
 function writePivotSheet(ss, data, sheetName) {
+  if (!sheetName || !/^\d{4}-\d{2}-\d{2}$/.test(sheetName)) return;
   // 비중 시트 이름
   const pivotName = sheetName + ' 비중';
   let ps = ss.getSheetByName(pivotName);
@@ -692,6 +700,7 @@ function writePivotSheet(ss, data, sheetName) {
 }
 
 function updateSummarySheet(ss, data, sheetName, total) {
+  if (!sheetName || !/^\d{4}-\d{2}-\d{2}$/.test(sheetName)) return;
   let summary = ss.getSheetByName('📈 요약');
   if (!summary) {
     summary = ss.insertSheet('📈 요약');
