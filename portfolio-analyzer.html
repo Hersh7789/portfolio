@@ -407,23 +407,26 @@ const GAS_CODE=`// =============================================
 // 설치 방법:
 // 1. 스프레드시트 → 확장 프로그램 → Apps Script
 // 2. 이 코드 전체를 붙여넣기
-// 3. 배포 → 새 배포 → 웹앱 → 모든사용자 → 배포
+// 3. 배포 → 새 배포 → 웹앱 선택
+//    - 다음 사용자로 실행: 나
+//    - 액세스 권한: 모든 사용자
 // 4. 배포 URL을 앱에 입력
 
-function doPost(e) {
-  try {
-    // Content-Type 관계없이 postData.contents 에서 파싱
-    const raw = e.postData ? e.postData.contents : '{}';
-    const data = JSON.parse(raw);
-    
-    // getSectorMap 액션 처리 (POST로도 가능)
-    if (data.action === 'getSectorMap') {
+// ── GET: 섹터매핑 읽기 / 연결 테스트 ──
+function doGet(e) {
+  const action = e && e.parameter && e.parameter.action;
+
+  if (action === 'getSectorMap') {
+    try {
       const ss = SpreadsheetApp.getActiveSpreadsheet();
       let sheet = ss.getSheetByName('섹터매핑');
+
+      // 섹터매핑 시트 없으면 예시 데이터로 자동 생성
       if (!sheet) {
         sheet = ss.insertSheet('섹터매핑');
         sheet.getRange(1, 1, 1, 2).setValues([['종목명', '섹터']]);
-        sheet.getRange(1, 1, 1, 2).setBackground('#1a1e2e').setFontColor('#00d4aa').setFontWeight('bold');
+        sheet.getRange(1, 1, 1, 2)
+             .setBackground('#1a1e2e').setFontColor('#00d4aa').setFontWeight('bold');
         sheet.getRange(2, 1, 5, 2).setValues([
           ['삼성전자', 'IT'],
           ['AAPL', 'IT'],
@@ -433,377 +436,216 @@ function doPost(e) {
         ]);
         sheet.autoResizeColumns(1, 2);
       }
+
       const lastRow = sheet.getLastRow();
       const sectorMap = {};
       if (lastRow > 1) {
-        const rows = sheet.getRange(2, 1, lastRow - 1, 2).getValues();
-        rows.forEach(r => {
+        sheet.getRange(2, 1, lastRow - 1, 2).getValues().forEach(r => {
           const name = (r[0] || '').toString().trim();
           const sector = (r[1] || '').toString().trim();
           if (name && sector) sectorMap[name] = sector;
         });
       }
-      return ContentService
-        .createTextOutput(JSON.stringify({ status: 'ok', sectorMap }))
-        .setMimeType(ContentService.MimeType.JSON);
+      return jsonResponse({ status: 'ok', sectorMap });
+    } catch (err) {
+      return jsonResponse({ status: 'error', error: err.message });
     }
-    
+  }
+
+  // 연결 테스트
+  return jsonResponse({ status: 'ok', message: '포트폴리오 분석기 연결 성공!' });
+}
+
+// ── POST: 포트폴리오 데이터 저장 ──
+function doPost(e) {
+  try {
+    const raw = e.postData ? e.postData.contents : '{}';
+    const data = JSON.parse(raw);
     const ss = SpreadsheetApp.getActiveSpreadsheet();
-    
-    // date 없으면 즉시 에러 반환 (잘못된 요청 방어)
+
+    // 날짜 유효성 검사 (YYYY-MM-DD 형식만 허용)
     if (!data.date || !/^\d{4}-\d{2}-\d{2}$/.test(data.date)) {
-      return ContentService
-        .createTextOutput(JSON.stringify({ success: false, error: 'invalid date: ' + data.date }))
-        .setMimeType(ContentService.MimeType.JSON);
+      return jsonResponse({ success: false, error: 'invalid date: ' + data.date });
     }
-    
-    // 날짜별 시트 이름 (예: 2026-03-14)
+
     const sheetName = data.date;
-    
-    // 해당 날짜 시트가 없으면 새로 생성
+    const holdings = data.holdings || [];
+    const cash = data.cash || 0;
+    const totalStock = holdings.reduce((s, h) => s + (h.value || 0), 0);
+    const total = totalStock + cash;
+
+    // ── 날짜별 자산 시트 ──
     let sheet = ss.getSheetByName(sheetName);
     if (!sheet) {
       sheet = ss.insertSheet(sheetName);
-      // 헤더 행 작성
-      const headers = ['종목명','투자국가','섹터','평가금액(원)','보유수량','수량증감','수익률(%)'];
-      sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-      
-      // 헤더 스타일
-      const hRange = sheet.getRange(1, 1, 1, headers.length);
-      hRange.setBackground('#1a1e2e')
-            .setFontColor('#00d4aa')
-            .setFontWeight('bold')
-            .setFontSize(11);
+      const headers = ['종목명', '투자국가', '섹터', '평가금액(원)', '보유수량', '수량증감', '수익률(%)'];
+      sheet.getRange(1, 1, 1, headers.length).setValues([headers])
+           .setBackground('#1a1e2e').setFontColor('#00d4aa').setFontWeight('bold').setFontSize(11);
       sheet.setFrozenRows(1);
+    } else {
+      // 기존 데이터 삭제 (덮어쓰기)
+      const lr = sheet.getLastRow();
+      if (lr > 1) sheet.deleteRows(2, lr - 1);
     }
-    
-    // 기존 데이터 삭제 후 새로 작성 (재업로드 시 덮어쓰기)
-    const lastRow = sheet.getLastRow();
-    if (lastRow > 1) {
-      sheet.deleteRows(2, lastRow - 1);
-    }
-    
-    // 종목 데이터 작성
-    const holdings = data.holdings || [];
-    if (holdings.length > 0) {
-      // ── 이전 데이터에서 수량 가져오기 (지난주 or 가장 가까운 날짜) ──
-      const prevShares = getPrevShares(ss, sheetName);
 
+    if (holdings.length > 0) {
+      const prevShares = getPrevShares(ss, sheetName);
       const rows = holdings.map(h => {
         const prev = prevShares[h.name] || 0;
         const diff = prev > 0 ? (h.shares || 0) - prev : 0;
-        return [
-          h.name || '',
-          h.country || '',
-          h.sector || '',
-          h.value || 0,
-          h.shares || 0,
-          diff,           // 수량 증감
-          h.return_rate || 0
-        ];
+        return [h.name||'', h.country||'', h.sector||'', h.value||0, h.shares||0, diff, h.return_rate||0];
       });
       sheet.getRange(2, 1, rows.length, 7).setValues(rows);
-      
-      // 수익률 컬럼 색상 (7번째 컬럼)
-      for (let i = 0; i < holdings.length; i++) {
-        const rate = holdings[i].return_rate || 0;
-        sheet.getRange(i + 2, 7).setFontColor(rate >= 0 ? '#00d4aa' : '#ff6b6b');
-      }
-      // 증감 컬럼 색상 (6번째 컬럼)
+
+      // 수익률 색상
       for (let i = 0; i < rows.length; i++) {
+        const rate = rows[i][6];
+        sheet.getRange(i+2, 7).setFontColor(rate >= 0 ? '#00d4aa' : '#ff6b6b');
         const diff = rows[i][5];
-        const cell = sheet.getRange(i + 2, 6);
-        if (diff > 0) cell.setFontColor('#00d4aa');
-        else if (diff < 0) cell.setFontColor('#ff6b6b');
-        else cell.setFontColor('#888888');
+        const dc = sheet.getRange(i+2, 6);
+        if (diff > 0) dc.setFontColor('#00d4aa');
+        else if (diff < 0) dc.setFontColor('#ff6b6b');
+        else dc.setFontColor('#888888');
       }
-      
-      // 금액 컬럼 숫자 포맷 (4번째 컬럼)
       sheet.getRange(2, 4, rows.length, 1).setNumberFormat('#,##0');
     }
-    
-    // 요약 행 추가
-    const summaryRow = lastRow > 1 ? holdings.length + 2 : holdings.length + 2;
-    sheet.getRange(summaryRow + 1, 1).setValue('💰 현금');
-    sheet.getRange(summaryRow + 1, 5).setValue(data.cash || 0)
-         .setNumberFormat('#,##0');
-    
-    // 총자산 표시
-    const totalStock = holdings.reduce((s, h) => s + (h.value || 0), 0);
-    const total = totalStock + (data.cash || 0);
-    sheet.getRange(summaryRow + 2, 1).setValue('📊 총 자산');
-    sheet.getRange(summaryRow + 2, 5).setValue(total)
-         .setNumberFormat('#,##0')
-         .setFontWeight('bold');
-    
+
+    // 현금 / 총자산 요약행
+    const sr = holdings.length + 2;
+    sheet.getRange(sr, 1).setValue('💰 현금');
+    sheet.getRange(sr, 5).setValue(cash).setNumberFormat('#,##0');
+    sheet.getRange(sr+1, 1).setValue('📊 총 자산');
+    sheet.getRange(sr+1, 5).setValue(total).setNumberFormat('#,##0').setFontWeight('bold');
+
     // 열 너비 자동 조정
     sheet.autoResizeColumns(1, 7);
-    
-    // 최소 열 너비 보장
-    for (let col = 1; col <= 7; col++) {
-      if (sheet.getColumnWidth(col) < 80) {
-        sheet.setColumnWidth(col, 80);
-      }
+    for (let c = 1; c <= 7; c++) {
+      if (sheet.getColumnWidth(c) < 80) sheet.setColumnWidth(c, 80);
     }
-    
-    // 요약 시트 업데이트
-    updateSummarySheet(ss, data, sheetName, total);
-    writePivotSheet(ss, data, sheetName);
-    
-    return ContentService
-      .createTextOutput(JSON.stringify({success: true, sheet: sheetName, rows: holdings.length}))
-      .setMimeType(ContentService.MimeType.JSON);
-      
-  } catch(err) {
-    return ContentService
-      .createTextOutput(JSON.stringify({success: false, error: err.message}))
-      .setMimeType(ContentService.MimeType.JSON);
+
+    // ── 비중 시트 ──
+    writePivotSheet(ss, holdings, cash, sheetName);
+
+    // ── 요약 시트 ──
+    updateSummarySheet(ss, holdings, cash, total, sheetName);
+
+    return jsonResponse({ success: true, sheet: sheetName, rows: holdings.length });
+
+  } catch (err) {
+    return jsonResponse({ success: false, error: err.message });
   }
 }
 
-// 이전 날짜 시트에서 수량 맵 반환 {종목명: 수량}
+// ── 이전 날짜 시트에서 수량 추출 ──
 function getPrevShares(ss, currentSheetName) {
   try {
-    const sheets = ss.getSheets();
-    // YYYY-MM-DD 패턴의 시트만 필터링
-    const dateSheetsAll = sheets
+    const prev = ss.getSheets()
       .map(s => s.getName())
-      .filter(n => /^\d{4}-\d{2}-\d{2}$/.test(n));
-
-    if (dateSheetsAll.length === 0) return {};
-
-    // 현재 날짜보다 이전인 시트만
-    const prev = dateSheetsAll
-      .filter(n => n < currentSheetName)
+      .filter(n => /^\d{4}-\d{2}-\d{2}$/.test(n) && n < currentSheetName)
       .sort();
+    if (!prev.length) return {};
 
-    if (prev.length === 0) return {};
+    const target = prev[prev.length - 1];
+    const sheet = ss.getSheetByName(target);
+    if (!sheet || sheet.getLastRow() < 2) return {};
 
-    // 가장 가까운 이전 날짜 시트 선택
-    // 우선 7일 이내(지난주) 탐색, 없으면 가장 최근 이전 날짜
-    const currentDate = new Date(currentSheetName);
-    const weekAgo = new Date(currentDate);
-    weekAgo.setDate(weekAgo.getDate() - 7);
-    const weekAgoStr = weekAgo.toISOString().split('T')[0];
-
-    // 7일 이내에서 가장 가까운 날짜
-    const withinWeek = prev.filter(n => n >= weekAgoStr);
-    const targetSheet = withinWeek.length > 0
-      ? withinWeek[withinWeek.length - 1]   // 가장 최근
-      : prev[prev.length - 1];               // 7일 이내 없으면 전체 중 가장 최근
-
-    const sheet = ss.getSheetByName(targetSheet);
-    if (!sheet) return {};
-
-    const lastRow = sheet.getLastRow();
-    if (lastRow < 2) return {};
-
-    // 헤더 읽어서 종목명(1), 보유수량(5) 컬럼 확인
-    const data = sheet.getRange(2, 1, lastRow - 1, 7).getValues();
-    const sharesMap = {};
-    data.forEach(row => {
-      const name = (row[0] || '').toString().trim();
-      const shares = Number(row[4]) || 0;
-      if (name && name !== '💰 현금' && name !== '📊 총 자산') {
-        sharesMap[name] = shares;
-      }
+    const map = {};
+    sheet.getRange(2, 1, sheet.getLastRow()-1, 5).getValues().forEach(r => {
+      const name = (r[0]||'').toString().trim();
+      const shares = Number(r[4]) || 0;
+      if (name && name !== '💰 현금' && name !== '📊 총 자산') map[name] = shares;
     });
-
-    Logger.log('이전 시트: ' + targetSheet + ', 종목수: ' + Object.keys(sharesMap).length);
-    return sharesMap;
-  } catch(e) {
-    Logger.log('getPrevShares 오류: ' + e.message);
-    return {};
-  }
+    return map;
+  } catch(e) { return {}; }
 }
 
-function writePivotSheet(ss, data, sheetName) {
-  if (!sheetName || !/^\d{4}-\d{2}-\d{2}$/.test(sheetName)) return;
-  // 비중 시트 이름
+// ── 비중 시트 작성 ──
+function writePivotSheet(ss, holdings, cash, sheetName) {
   const pivotName = sheetName + ' 비중';
   let ps = ss.getSheetByName(pivotName);
-  if (!ps) {
-    ps = ss.insertSheet(pivotName);
-  } else {
-    ps.clearContents();
-  }
-  
-  const holdings = data.holdings || [];
-  const cash = data.cash || 0;
-  const totalStock = holdings.reduce((s, h) => s + (h.value || 0), 0);
+  if (!ps) ps = ss.insertSheet(pivotName);
+  else ps.clearContents();
+
+  const totalStock = holdings.reduce((s, h) => s + (h.value||0), 0);
   const total = totalStock + cash;
 
-  // ── 국가별 자산 비중 ──
-  const countryMap = {};
-  holdings.forEach(h => {
-    const k = h.country || '기타';
-    countryMap[k] = (countryMap[k] || 0) + (h.value || 0);
-  });
-  const countrySorted = Object.entries(countryMap).sort((a, b) => b[1] - a[1]);
-
-  // ── 섹터별 비중 ──
-  const sectorMap = {};
-  holdings.forEach(h => {
-    const k = h.sector || '기타';
-    sectorMap[k] = (sectorMap[k] || 0) + (h.value || 0);
-  });
-  const sectorSorted = Object.entries(sectorMap).sort((a, b) => b[1] - a[1]);
-
-  // ── 주식/현금 비중 ──
-  const cashRatio = total > 0 ? Math.round(cash / total * 10000) / 100 : 0;
-  const stockRatio = total > 0 ? Math.round(totalStock / total * 10000) / 100 : 0;
-
-  let row = 1;
-
-  // 헤더 스타일 함수
-  function writeHeader(label, col) {
-    const cell = ps.getRange(row, col);
-    cell.setValue(label).setBackground('#1a1e2e').setFontColor('#00d4aa').setFontWeight('bold');
+  function groupBy(key) {
+    const m = {};
+    holdings.forEach(h => { const k = h[key]||'기타'; m[k] = (m[k]||0) + (h.value||0); });
+    return Object.entries(m).sort((a,b) => b[1]-a[1]);
   }
 
-  // ── 국가별 자산 비중 ──
-  writeHeader('국가', 1); writeHeader('평가금액(원)', 2); writeHeader('비중(%)', 3);
-  row++;
-  countrySorted.forEach(([k, v]) => {
-    const pct = total > 0 ? Math.round(v / totalStock * 10000) / 100 : 0;
-    ps.getRange(row, 1).setValue(k);
-    ps.getRange(row, 2).setValue(v).setNumberFormat('#,##0');
-    ps.getRange(row, 3).setValue(pct).setNumberFormat('0.00');
+  function writeSection(title, entries, base) {
+    ps.getRange(row, 1).setValue(title).setBackground('#1a1e2e').setFontColor('#00d4aa').setFontWeight('bold');
+    ps.getRange(row, 2).setValue('평가금액(원)').setBackground('#1a1e2e').setFontColor('#00d4aa').setFontWeight('bold');
+    ps.getRange(row, 3).setValue('비중(%)').setBackground('#1a1e2e').setFontColor('#00d4aa').setFontWeight('bold');
     row++;
-  });
-  row++; // 빈 행
+    entries.forEach(([k, v]) => {
+      const pct = base > 0 ? Math.round(v/base*10000)/100 : 0;
+      ps.getRange(row, 1).setValue(k);
+      ps.getRange(row, 2).setValue(v).setNumberFormat('#,##0');
+      ps.getRange(row, 3).setValue(pct).setNumberFormat('0.00');
+      row++;
+    });
+    row++; // 빈 행
+  }
 
-  // ── 섹터별 비중 ──
-  writeHeader('섹터', 1); writeHeader('평가금액(원)', 2); writeHeader('비중(%)', 3);
-  row++;
-  sectorSorted.forEach(([k, v]) => {
-    const pct = totalStock > 0 ? Math.round(v / totalStock * 10000) / 100 : 0;
-    ps.getRange(row, 1).setValue(k);
-    ps.getRange(row, 2).setValue(v).setNumberFormat('#,##0');
-    ps.getRange(row, 3).setValue(pct).setNumberFormat('0.00');
-    row++;
-  });
-  row++;
-
-  // ── 주식/현금 비중 ──
-  writeHeader('구분', 1); writeHeader('금액(원)', 2); writeHeader('비중(%)', 3);
-  row++;
-  ps.getRange(row, 1).setValue('주식');
-  ps.getRange(row, 2).setValue(totalStock).setNumberFormat('#,##0');
-  ps.getRange(row, 3).setValue(stockRatio).setNumberFormat('0.00');
-  row++;
-  ps.getRange(row, 1).setValue('현금');
-  ps.getRange(row, 2).setValue(cash).setNumberFormat('#,##0');
-  ps.getRange(row, 3).setValue(cashRatio).setNumberFormat('0.00');
-
+  let row = 1;
+  writeSection('국가', groupBy('country'), totalStock);
+  writeSection('섹터', groupBy('sector'), totalStock);
+  writeSection('구분', [['주식', totalStock], ['현금', cash]], total);
   ps.autoResizeColumns(1, 3);
 }
 
-function updateSummarySheet(ss, data, sheetName, total) {
-  if (!sheetName || !/^\d{4}-\d{2}-\d{2}$/.test(sheetName)) return;
+// ── 요약 시트 작성 ──
+function updateSummarySheet(ss, holdings, cash, total, sheetName) {
   let summary = ss.getSheetByName('📈 요약');
   if (!summary) {
     summary = ss.insertSheet('📈 요약');
     summary.getRange(1, 1, 1, 5).setValues([['날짜','총자산(원)','종목수','평균수익률(%)','현금(원)']]);
-    const hRange = summary.getRange(1, 1, 1, 5);
-    hRange.setBackground('#1a1e2e').setFontColor('#00d4aa').setFontWeight('bold');
+    summary.getRange(1, 1, 1, 5)
+           .setBackground('#1a1e2e').setFontColor('#00d4aa').setFontWeight('bold');
     summary.setFrozenRows(1);
-    // 요약 시트를 첫 번째로 이동
     ss.setActiveSheet(summary);
     ss.moveActiveSheet(1);
   }
-  
-  const holdings = data.holdings || [];
-  const avgR = holdings.length 
-    ? Math.round(holdings.reduce((s, h) => s + (h.return_rate || 0), 0) / holdings.length * 100) / 100
+
+  const avgR = holdings.length
+    ? Math.round(holdings.reduce((s,h) => s+(h.return_rate||0), 0) / holdings.length * 100) / 100
     : 0;
-  
-  // 같은 날짜 행이 있으면 업데이트, 없으면 추가
+
+  // 같은 날짜면 업데이트, 없으면 추가
   const allData = summary.getDataRange().getValues();
   let found = false;
   for (let i = 1; i < allData.length; i++) {
     if (allData[i][0] === sheetName) {
-      summary.getRange(i + 1, 2, 1, 4).setValues([[total, holdings.length, avgR, data.cash || 0]]);
-      found = true;
-      break;
+      summary.getRange(i+1, 2, 1, 4).setValues([[total, holdings.length, avgR, cash]]);
+      found = true; break;
     }
   }
-  if (!found) {
-    summary.appendRow([sheetName, total, holdings.length, avgR, data.cash || 0]);
+  if (!found) summary.appendRow([sheetName, total, holdings.length, avgR, cash]);
+
+  // 날짜 오름차순 정렬
+  const lr = summary.getLastRow();
+  if (lr > 2) summary.getRange(2, 1, lr-1, 5).sort({ column: 1, ascending: true });
+
+  // 숫자 포맷
+  const dr = summary.getLastRow() - 1;
+  if (dr > 0) {
+    summary.getRange(2, 2, dr, 1).setNumberFormat('#,##0');
+    summary.getRange(2, 4, dr, 1).setNumberFormat('0.00');
+    summary.getRange(2, 5, dr, 1).setNumberFormat('#,##0');
   }
-  
-  // 날짜 오름차순 정렬 (헤더 제외)
-  const lastRow = summary.getLastRow();
-  if (lastRow > 2) {
-    summary.getRange(2, 1, lastRow - 1, 5).sort({ column: 1, ascending: true });
-  }
-  
-  // 숫자 포맷 적용
-  const dataRows = summary.getLastRow() - 1;
-  if (dataRows > 0) {
-    summary.getRange(2, 2, dataRows, 1).setNumberFormat('#,##0');         // 총자산
-    summary.getRange(2, 4, dataRows, 1).setNumberFormat('0.00');           // 평균수익률 소수점 2자리
-    summary.getRange(2, 5, dataRows, 1).setNumberFormat('#,##0');         // 현금
-  }
-  
   summary.autoResizeColumns(1, 5);
 }
 
-function doGet(e) {
-  const action = e && e.parameter && e.parameter.action;
-  
-  // 섹터 매핑 읽기
-  if (action === 'getSectorMap') {
-    try {
-      const ss = SpreadsheetApp.getActiveSpreadsheet();
-      let sheet = ss.getSheetByName('섹터매핑');
-      
-      // 섹터매핑 시트가 없으면 자동 생성
-      if (!sheet) {
-        sheet = ss.insertSheet('섹터매핑');
-        // 헤더
-        sheet.getRange(1, 1, 1, 2).setValues([['종목명', '섹터']]);
-        const hRange = sheet.getRange(1, 1, 1, 2);
-        hRange.setBackground('#1a1e2e').setFontColor('#00d4aa').setFontWeight('bold');
-        // 예시 데이터
-        sheet.getRange(2, 1, 5, 2).setValues([
-          ['삼성전자', 'IT'],
-          ['AAPL', 'IT'],
-          ['NVDA', 'IT'],
-          ['GOOGL', 'IT'],
-          ['AGNC', '금융']
-        ]);
-        sheet.autoResizeColumns(1, 2);
-      }
-      
-      // 데이터 읽기 (헤더 제외)
-      const lastRow = sheet.getLastRow();
-      const sectorMap = {};
-      if (lastRow > 1) {
-        const data = sheet.getRange(2, 1, lastRow - 1, 2).getValues();
-        data.forEach(row => {
-          const name = (row[0] || '').toString().trim();
-          const sector = (row[1] || '').toString().trim();
-          if (name && sector) sectorMap[name] = sector;
-        });
-      }
-      
-      return makeResponse({ status: 'ok', sectorMap });
-    } catch(err) {
-      return makeResponse({ status: 'error', error: err.message });
-    }
-  }
-  
-  return makeResponse({ status: 'ok', message: '포트폴리오 분석기 연결 성공!' });
-}
-
-// CORS 허용 응답 헬퍼
-function makeResponse(obj) {
-  const output = ContentService
+// ── JSON 응답 헬퍼 ──
+function jsonResponse(obj) {
+  return ContentService
     .createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
-  return output;
-}`;
+}
+`;
 
 // ── INIT ──
 document.getElementById('gasCodeBlock').textContent = GAS_CODE;
@@ -880,31 +722,24 @@ function toggleApiKeyVisible() {
 // 섹터매핑 로드
 async function loadSectorMap() {
   if (!gasUrl) return;
+  const statusEl = document.getElementById('sectorMapStatus');
   try {
-    // POST로 섹터맵 요청 (GET CORS 문제 우회)
-    const res = await fetch(gasUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
-      body: JSON.stringify({ action: 'getSectorMap' })
-    });
+    // GET 요청으로 섹터매핑 로드 (doGet → getSectorMap)
+    const url = gasUrl + '?action=getSectorMap&t=' + Date.now();
+    const res = await fetch(url, { method: 'GET', redirect: 'follow' });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const text = await res.text();
-    if (text.trim().startsWith('<')) {
-      throw new Error('Apps Script 재배포가 필요합니다');
-    }
+    // HTML이 반환되면 재배포 필요
+    if (text.trim().startsWith('<')) throw new Error('Apps Script 재배포 필요');
     const data = JSON.parse(text);
     if (data.sectorMap) {
       sectorMap = data.sectorMap;
       const count = Object.keys(sectorMap).length;
-      const statusEl = document.getElementById('sectorMapStatus');
       if (statusEl) statusEl.textContent =
-        count > 0 ? `✅ 섹터매핑 ${count}개 종목 로드됨` : '📋 섹터매핑 시트가 비어있어요 - 스프레드시트에서 직접 입력하세요';
-      console.log('섹터매핑 로드 성공:', count, '개');
+        count > 0 ? `✅ 섹터매핑 ${count}개 종목 로드됨` : '📋 섹터매핑 시트 비어있음 — 스프레드시트에서 직접 입력하세요';
     }
   } catch(e) {
-    console.log('섹터매핑 로드 실패:', e.message);
-    const statusEl = document.getElementById('sectorMapStatus');
-    if (statusEl) statusEl.textContent = '⚠️ 로드 실패: ' + e.message + ' — Apps Script를 재배포해주세요';
+    if (statusEl) statusEl.textContent = '⚠️ 로드 실패: ' + e.message;
   }
 }
 
