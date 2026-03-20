@@ -347,6 +347,21 @@ body{background:var(--bg);color:var(--txt);font-family:'Noto Sans KR',sans-serif
         <button class="conn-btn primary" onclick="saveGasUrl2()">저장 및 연결</button>
         <button class="conn-btn" onclick="testConnection()">연결 테스트</button>
       </div>
+      <div id="sectorMapStatus" style="font-size:11px;color:var(--txt2);margin-top:10px;"></div>
+      <button class="conn-btn" style="margin-top:8px;width:100%" onclick="loadSectorMap().then(()=>toast('섹터매핑 새로고침 완료'))">🔄 섹터매핑 새로고침</button>
+    </div>
+
+    <div class="setup-page-card">
+      <h3>📋 섹터매핑 사용법</h3>
+      <p>구글 스프레드시트에 <strong style="color:var(--txt)">섹터매핑</strong> 시트가 자동으로 생성됩니다.<br>
+      Apps Script URL을 저장하면 시트가 만들어지고, 아래처럼 종목명과 섹터를 입력하세요.</p>
+      <div class="code-block" style="white-space:pre;font-size:12px">종목명          섹터
+KODEX 반도체    IT
+삼성전자        IT
+AGNC           금융
+NVDA           IT
+미국 달러       기타</div>
+      <p style="margin-top:8px;">앱을 열 때마다 자동으로 불러오며, 분석 시 AI 판단 대신 지정한 섹터가 적용됩니다.</p>
     </div>
 
     <div class="setup-page-card">
@@ -380,7 +395,7 @@ const FLAG={'미국':'🇺🇸','한국':'🇰🇷','일본':'🇯🇵','중국'
 const BSTYLE={'메리츠증권':'background:rgba(255,107,107,.12);color:#ff8a8a','유안타증권':'background:rgba(79,143,255,.12);color:#7aabff','한국투자증권':'background:rgba(0,212,170,.12);color:#00d4aa','나무증권':'background:rgba(255,209,102,.12);color:#ffd166','알수없음':'background:rgba(255,255,255,.05);color:#6b7090'};
 
 // ── STATE ──
-let imgFile=null, imgB64=null, result=null, detectedDate=null;
+let imgFile=null, imgB64=null, result=null, detectedDate=null, sectorMap={};
 let history=JSON.parse(sessionStorage.getItem('pfh')||'[]');
 let gasUrl=localStorage.getItem('gasUrl')||'';
 let apiKey=localStorage.getItem('apiKey')||'';
@@ -410,7 +425,7 @@ function doPost(e) {
     if (!sheet) {
       sheet = ss.insertSheet(sheetName);
       // 헤더 행 작성
-      const headers = ['종목명','투자국가','섹터','평가금액(원)','보유수량','수익률(%)'];
+      const headers = ['종목명','투자국가','섹터','평가금액(원)','보유수량','수량증감','수익률(%)'];
       sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
       
       // 헤더 스타일
@@ -431,26 +446,40 @@ function doPost(e) {
     // 종목 데이터 작성
     const holdings = data.holdings || [];
     if (holdings.length > 0) {
-      const rows = holdings.map(h => [
-        h.name || '',
-        h.country || '',
-        h.sector || '',
-        h.value || 0,
-        h.shares || 0,
-        h.return_rate || 0
-      ]);
-      sheet.getRange(2, 1, rows.length, 6).setValues(rows);
+      // ── 이전 데이터에서 수량 가져오기 (지난주 or 가장 가까운 날짜) ──
+      const prevShares = getPrevShares(ss, sheetName);
+
+      const rows = holdings.map(h => {
+        const prev = prevShares[h.name] || 0;
+        const diff = prev > 0 ? (h.shares || 0) - prev : 0;
+        return [
+          h.name || '',
+          h.country || '',
+          h.sector || '',
+          h.value || 0,
+          h.shares || 0,
+          diff,           // 수량 증감
+          h.return_rate || 0
+        ];
+      });
+      sheet.getRange(2, 1, rows.length, 7).setValues(rows);
       
-      // 수익률 컬럼 색상 (6번째 컬럼)
+      // 수익률 컬럼 색상 (7번째 컬럼)
       for (let i = 0; i < holdings.length; i++) {
         const rate = holdings[i].return_rate || 0;
+        sheet.getRange(i + 2, 7).setFontColor(rate >= 0 ? '#00d4aa' : '#ff6b6b');
+      }
+      // 증감 컬럼 색상 (6번째 컬럼)
+      for (let i = 0; i < rows.length; i++) {
+        const diff = rows[i][5];
         const cell = sheet.getRange(i + 2, 6);
-        cell.setFontColor(rate >= 0 ? '#00d4aa' : '#ff6b6b');
+        if (diff > 0) cell.setFontColor('#00d4aa');
+        else if (diff < 0) cell.setFontColor('#ff6b6b');
+        else cell.setFontColor('#888888');
       }
       
       // 금액 컬럼 숫자 포맷 (4번째 컬럼)
-      sheet.getRange(2, 4, rows.length, 1)
-           .setNumberFormat('#,##0');
+      sheet.getRange(2, 4, rows.length, 1).setNumberFormat('#,##0');
     }
     
     // 요약 행 추가
@@ -468,10 +497,18 @@ function doPost(e) {
          .setFontWeight('bold');
     
     // 열 너비 자동 조정
-    sheet.autoResizeColumns(1, 6);
+    sheet.autoResizeColumns(1, 7);
+    
+    // 최소 열 너비 보장
+    for (let col = 1; col <= 7; col++) {
+      if (sheet.getColumnWidth(col) < 80) {
+        sheet.setColumnWidth(col, 80);
+      }
+    }
     
     // 요약 시트 업데이트
     updateSummarySheet(ss, data, sheetName, total);
+    writePivotSheet(ss, data, sheetName);
     
     return ContentService
       .createTextOutput(JSON.stringify({success: true, sheet: sheetName, rows: holdings.length}))
@@ -482,6 +519,143 @@ function doPost(e) {
       .createTextOutput(JSON.stringify({success: false, error: err.message}))
       .setMimeType(ContentService.MimeType.JSON);
   }
+}
+
+// 이전 날짜 시트에서 수량 맵 반환 {종목명: 수량}
+function getPrevShares(ss, currentSheetName) {
+  try {
+    const sheets = ss.getSheets();
+    // YYYY-MM-DD 패턴의 시트만 필터링
+    const dateSheetsAll = sheets
+      .map(s => s.getName())
+      .filter(n => /^\d{4}-\d{2}-\d{2}$/.test(n));
+
+    if (dateSheetsAll.length === 0) return {};
+
+    // 현재 날짜보다 이전인 시트만
+    const prev = dateSheetsAll
+      .filter(n => n < currentSheetName)
+      .sort();
+
+    if (prev.length === 0) return {};
+
+    // 가장 가까운 이전 날짜 시트 선택
+    // 우선 7일 이내(지난주) 탐색, 없으면 가장 최근 이전 날짜
+    const currentDate = new Date(currentSheetName);
+    const weekAgo = new Date(currentDate);
+    weekAgo.setDate(weekAgo.getDate() - 7);
+    const weekAgoStr = weekAgo.toISOString().split('T')[0];
+
+    // 7일 이내에서 가장 가까운 날짜
+    const withinWeek = prev.filter(n => n >= weekAgoStr);
+    const targetSheet = withinWeek.length > 0
+      ? withinWeek[withinWeek.length - 1]   // 가장 최근
+      : prev[prev.length - 1];               // 7일 이내 없으면 전체 중 가장 최근
+
+    const sheet = ss.getSheetByName(targetSheet);
+    if (!sheet) return {};
+
+    const lastRow = sheet.getLastRow();
+    if (lastRow < 2) return {};
+
+    // 헤더 읽어서 종목명(1), 보유수량(5) 컬럼 확인
+    const data = sheet.getRange(2, 1, lastRow - 1, 7).getValues();
+    const sharesMap = {};
+    data.forEach(row => {
+      const name = (row[0] || '').toString().trim();
+      const shares = Number(row[4]) || 0;
+      if (name && name !== '💰 현금' && name !== '📊 총 자산') {
+        sharesMap[name] = shares;
+      }
+    });
+
+    Logger.log('이전 시트: ' + targetSheet + ', 종목수: ' + Object.keys(sharesMap).length);
+    return sharesMap;
+  } catch(e) {
+    Logger.log('getPrevShares 오류: ' + e.message);
+    return {};
+  }
+}
+
+function writePivotSheet(ss, data, sheetName) {
+  // 비중 시트 이름
+  const pivotName = sheetName + ' 비중';
+  let ps = ss.getSheetByName(pivotName);
+  if (!ps) {
+    ps = ss.insertSheet(pivotName);
+  } else {
+    ps.clearContents();
+  }
+  
+  const holdings = data.holdings || [];
+  const cash = data.cash || 0;
+  const totalStock = holdings.reduce((s, h) => s + (h.value || 0), 0);
+  const total = totalStock + cash;
+
+  // ── 국가별 자산 비중 ──
+  const countryMap = {};
+  holdings.forEach(h => {
+    const k = h.country || '기타';
+    countryMap[k] = (countryMap[k] || 0) + (h.value || 0);
+  });
+  const countrySorted = Object.entries(countryMap).sort((a, b) => b[1] - a[1]);
+
+  // ── 섹터별 비중 ──
+  const sectorMap = {};
+  holdings.forEach(h => {
+    const k = h.sector || '기타';
+    sectorMap[k] = (sectorMap[k] || 0) + (h.value || 0);
+  });
+  const sectorSorted = Object.entries(sectorMap).sort((a, b) => b[1] - a[1]);
+
+  // ── 주식/현금 비중 ──
+  const cashRatio = total > 0 ? Math.round(cash / total * 10000) / 100 : 0;
+  const stockRatio = total > 0 ? Math.round(totalStock / total * 10000) / 100 : 0;
+
+  let row = 1;
+
+  // 헤더 스타일 함수
+  function writeHeader(label, col) {
+    const cell = ps.getRange(row, col);
+    cell.setValue(label).setBackground('#1a1e2e').setFontColor('#00d4aa').setFontWeight('bold');
+  }
+
+  // ── 국가별 자산 비중 ──
+  writeHeader('국가', 1); writeHeader('평가금액(원)', 2); writeHeader('비중(%)', 3);
+  row++;
+  countrySorted.forEach(([k, v]) => {
+    const pct = total > 0 ? Math.round(v / totalStock * 10000) / 100 : 0;
+    ps.getRange(row, 1).setValue(k);
+    ps.getRange(row, 2).setValue(v).setNumberFormat('#,##0');
+    ps.getRange(row, 3).setValue(pct).setNumberFormat('0.00');
+    row++;
+  });
+  row++; // 빈 행
+
+  // ── 섹터별 비중 ──
+  writeHeader('섹터', 1); writeHeader('평가금액(원)', 2); writeHeader('비중(%)', 3);
+  row++;
+  sectorSorted.forEach(([k, v]) => {
+    const pct = totalStock > 0 ? Math.round(v / totalStock * 10000) / 100 : 0;
+    ps.getRange(row, 1).setValue(k);
+    ps.getRange(row, 2).setValue(v).setNumberFormat('#,##0');
+    ps.getRange(row, 3).setValue(pct).setNumberFormat('0.00');
+    row++;
+  });
+  row++;
+
+  // ── 주식/현금 비중 ──
+  writeHeader('구분', 1); writeHeader('금액(원)', 2); writeHeader('비중(%)', 3);
+  row++;
+  ps.getRange(row, 1).setValue('주식');
+  ps.getRange(row, 2).setValue(totalStock).setNumberFormat('#,##0');
+  ps.getRange(row, 3).setValue(stockRatio).setNumberFormat('0.00');
+  row++;
+  ps.getRange(row, 1).setValue('현금');
+  ps.getRange(row, 2).setValue(cash).setNumberFormat('#,##0');
+  ps.getRange(row, 3).setValue(cashRatio).setNumberFormat('0.00');
+
+  ps.autoResizeColumns(1, 3);
 }
 
 function updateSummarySheet(ss, data, sheetName, total) {
@@ -499,7 +673,7 @@ function updateSummarySheet(ss, data, sheetName, total) {
   
   const holdings = data.holdings || [];
   const avgR = holdings.length 
-    ? holdings.reduce((s, h) => s + (h.return_rate || 0), 0) / holdings.length 
+    ? Math.round(holdings.reduce((s, h) => s + (h.return_rate || 0), 0) / holdings.length * 100) / 100
     : 0;
   
   // 같은 날짜 행이 있으면 업데이트, 없으면 추가
@@ -516,13 +690,74 @@ function updateSummarySheet(ss, data, sheetName, total) {
     summary.appendRow([sheetName, total, holdings.length, avgR, data.cash || 0]);
   }
   
-  summary.getRange(2, 2, summary.getLastRow() - 1, 1).setNumberFormat('#,##0');
+  // 날짜 오름차순 정렬 (헤더 제외)
+  const lastRow = summary.getLastRow();
+  if (lastRow > 2) {
+    summary.getRange(2, 1, lastRow - 1, 5).sort({ column: 1, ascending: true });
+  }
+  
+  // 숫자 포맷 적용
+  const dataRows = summary.getLastRow() - 1;
+  if (dataRows > 0) {
+    summary.getRange(2, 2, dataRows, 1).setNumberFormat('#,##0');         // 총자산
+    summary.getRange(2, 4, dataRows, 1).setNumberFormat('0.00');           // 평균수익률 소수점 2자리
+    summary.getRange(2, 5, dataRows, 1).setNumberFormat('#,##0');         // 현금
+  }
+  
   summary.autoResizeColumns(1, 5);
 }
 
 function doGet(e) {
+  const action = e && e.parameter && e.parameter.action;
+  
+  // 섹터 매핑 읽기
+  if (action === 'getSectorMap') {
+    try {
+      const ss = SpreadsheetApp.getActiveSpreadsheet();
+      let sheet = ss.getSheetByName('섹터매핑');
+      
+      // 섹터매핑 시트가 없으면 자동 생성
+      if (!sheet) {
+        sheet = ss.insertSheet('섹터매핑');
+        // 헤더
+        sheet.getRange(1, 1, 1, 2).setValues([['종목명', '섹터']]);
+        const hRange = sheet.getRange(1, 1, 1, 2);
+        hRange.setBackground('#1a1e2e').setFontColor('#00d4aa').setFontWeight('bold');
+        // 예시 데이터
+        sheet.getRange(2, 1, 5, 2).setValues([
+          ['삼성전자', 'IT'],
+          ['AAPL', 'IT'],
+          ['NVDA', 'IT'],
+          ['GOOGL', 'IT'],
+          ['AGNC', '금융']
+        ]);
+        sheet.autoResizeColumns(1, 2);
+      }
+      
+      // 데이터 읽기 (헤더 제외)
+      const lastRow = sheet.getLastRow();
+      const sectorMap = {};
+      if (lastRow > 1) {
+        const data = sheet.getRange(2, 1, lastRow - 1, 2).getValues();
+        data.forEach(row => {
+          const name = (row[0] || '').toString().trim();
+          const sector = (row[1] || '').toString().trim();
+          if (name && sector) sectorMap[name] = sector;
+        });
+      }
+      
+      return ContentService
+        .createTextOutput(JSON.stringify({ status: 'ok', sectorMap }))
+        .setMimeType(ContentService.MimeType.JSON);
+    } catch(err) {
+      return ContentService
+        .createTextOutput(JSON.stringify({ status: 'error', error: err.message }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+  }
+  
   return ContentService
-    .createTextOutput(JSON.stringify({status: 'ok', message: '포트폴리오 분석기 연결 성공!'}))
+    .createTextOutput(JSON.stringify({ status: 'ok', message: '포트폴리오 분석기 연결 성공!' }))
     .setMimeType(ContentService.MimeType.JSON);
 }`;
 
@@ -539,6 +774,8 @@ if (apiKey) {
   document.getElementById('apiKeyStatus').textContent = '✅ API 키 저장됨';
 }
 renderHistory();
+// 앱 시작 시 섹터매핑 자동 로드
+if (gasUrl) loadSectorMap();
 
 // ── PAGE ROUTING ──
 function goPage(p) {
@@ -557,6 +794,7 @@ function saveGasUrl() {
   localStorage.setItem('gasUrl', url);
   document.getElementById('gasUrlInput2').value = url;
   updateSheetBadge(true);
+  loadSectorMap();
   toast('✅ 저장됨');
 }
 
@@ -567,6 +805,7 @@ function saveGasUrl2() {
   localStorage.setItem('gasUrl', url);
   document.getElementById('gasUrlInput').value = url;
   updateSheetBadge(true);
+  loadSectorMap();
   testConnection();
 }
 
@@ -592,6 +831,24 @@ function saveApiKeyMini() {
 function toggleApiKeyVisible() {
   const input = document.getElementById('apiKeyInput');
   input.type = input.type === 'password' ? 'text' : 'password';
+}
+
+// 섹터매핑 로드
+async function loadSectorMap() {
+  if (!gasUrl) return;
+  try {
+    const res = await fetch(gasUrl + '?action=getSectorMap', { method: 'GET' });
+    const data = await res.json();
+    if (data.status === 'ok' && data.sectorMap) {
+      sectorMap = data.sectorMap;
+      const count = Object.keys(sectorMap).length;
+      document.getElementById('sectorMapStatus').textContent =
+        count > 0 ? `✅ 섹터매핑 ${count}개 종목 로드됨` : '📋 섹터매핑 시트가 비어있습니다';
+      console.log('섹터매핑 로드:', count, '개');
+    }
+  } catch(e) {
+    console.log('섹터매핑 로드 실패:', e);
+  }
 }
 
 function updateSheetBadge(connected) {
@@ -710,6 +967,15 @@ async function analyze() {
   try {
     result = await callClaude();
     result.date = detectedDate || new Date().toISOString().split('T')[0];
+    
+    // 섹터매핑 적용: 매핑된 종목은 AI 판단 대신 지정 섹터 사용
+    if (Object.keys(sectorMap).length > 0) {
+      result.holdings = result.holdings.map(h => {
+        const mapped = sectorMap[h.name] || sectorMap[(h.name||'').trim()];
+        if (mapped) h.sector = mapped;
+        return h;
+      });
+    }
 
     document.getElementById('l2').className='log-item ok';
     document.getElementById('l3').className='log-item on';
@@ -971,7 +1237,7 @@ function renderResult(sheetSaved=false) {
   const totSh=h.reduce((s,x)=>s+(x.shares||0),0);
   cw.appendChild(mkChart('국가별 자산 비중',grp(h,'country','value'),tStock));
   cw.appendChild(mkChart('섹터별 투자 비중',grp(h,'sector','value'),tStock));
-  cw.appendChild(mkChart('국가별 수량 비중',grp(h,'country','shares'),totSh));
+  cw.appendChild(mkChart('국가별 주식 평가액 비중',grp(h,'country','value'),tStock));
   cw.appendChild(mkChart('주식 / 현금',{'주식':tStock,'현금':cash},total));
 
   // Holdings
